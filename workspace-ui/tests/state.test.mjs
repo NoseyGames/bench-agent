@@ -1,0 +1,7 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {freshState,newChat,submitMessage,validateState,searchChats,classifyDiff} from '../state.js';
+test('message submission preserves attachments, resets draft and derives title',()=>{const state=freshState(),c=newChat(state);c.draft='  Fix the sidebar  ';c.files=[{name:'app.js',content:'export {}',size:9}];const m=submitMessage(c);assert.equal(m.text,'Fix the sidebar');assert.equal(c.title,m.text);assert.equal(c.draft,'');assert.equal(c.files.length,0);assert.equal(m.files[0].content,'export {}');assert.equal(submitMessage(c),null);assert.deepEqual(validateState(JSON.parse(JSON.stringify(state))),state);});
+test('search includes message body and separates archive',()=>{const s=freshState(),c=newChat(s);c.draft='A needle in a message';submitMessage(c);c.title='Task';assert.equal(searchChats(s,'NEEDLE').length,1);c.archived=true;assert.equal(searchChats(s,'needle').length,0);assert.equal(searchChats(s,'needle',true).length,1);});
+test('import rejects dangling projects and malformed attachments',()=>{const s=freshState(),c=newChat(s);c.project='missing';assert.throws(()=>validateState(s));c.project=null;c.files=[{name:'bad'}];assert.throws(()=>validateState(s));});
+test('diff file headers do not inflate change counts',()=>{const d=classifyDiff('diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new');assert.equal(d.additions,1);assert.equal(d.deletions,1);assert.equal(d.lines[2].type,'file');});

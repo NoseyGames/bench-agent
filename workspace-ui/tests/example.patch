@@ -1,0 +1,6 @@
+diff --git a/interface.css b/interface.css
+--- a/interface.css
++++ b/interface.css
+@@ -1 +1 @@
+-body { color: white; }
++body { color: var(--text); }

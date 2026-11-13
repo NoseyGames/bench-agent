@@ -1,0 +1,7 @@
+{
+  "title": "Imported project discussion",
+  "messages": [
+    {"role": "user", "content": "Keep the existing project structure and add tests for any changes."},
+    {"role": "assistant", "content": "Understood. We will review the proposed changes before applying them."}
+  ]
+}
