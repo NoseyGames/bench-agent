@@ -38,7 +38,7 @@ test('actual C engine waits for preview ACK, backs up, builds and tests',async t
       assert.equal(await fs.readFile(path.join(f.root,'main.c'),'utf8'),f.original);
       assert.equal((await f.post('ack',{id,sequence:999})).status,409);
     }
-    if(['preview','command'].includes(e.type))assert.equal((await f.post('ack',{id,sequence:e.sequence})).status,200);
+    if(['preview','command'].includes(e.type)){assert.equal((await f.post('ack',{id,sequence:e.sequence})).status,403);assert.equal((await f.post('decision',{id,sequence:e.sequence,token:e.approvalToken,allow:true})).status,200);assert.equal((await f.post('ack',{id,sequence:e.sequence})).status,200);}
   }}
   const success=events.find(e=>e.type==='success');assert.ok(success,JSON.stringify(events));
   assert.equal(await fs.readFile(path.join(f.root,'main.c'),'utf8'),f.updated);

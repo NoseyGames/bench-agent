@@ -38,7 +38,7 @@ test('local HTTP models + real C clarification, planning, save, build and test w
   assert.equal(c.configured,true);assert.equal(c.hasKey,false);
   const run=async(id,text)=>{
     const res=await post('run',{id,chatId:'local-chat',root,model:c.model,messages:[{role:'user',text}],execute:true});assert.equal(res.status,200);
-    const events=[];let buffer='';for await(const chunk of res.body){buffer+=new TextDecoder().decode(chunk);let n;while((n=buffer.indexOf('\n'))>=0){const e=JSON.parse(buffer.slice(0,n));buffer=buffer.slice(n+1);events.push(e);if(['preview','command'].includes(e.type))assert.equal((await post('ack',{id,sequence:e.sequence})).status,200);}}return events;
+    const events=[];let buffer='';for await(const chunk of res.body){buffer+=new TextDecoder().decode(chunk);let n;while((n=buffer.indexOf('\n'))>=0){const e=JSON.parse(buffer.slice(0,n));buffer=buffer.slice(n+1);events.push(e);if(['preview','command'].includes(e.type)){assert.equal((await post('ack',{id,sequence:e.sequence})).status,403);assert.equal((await post('decision',{id,sequence:e.sequence,token:e.approvalToken,allow:true})).status,200);assert.equal((await post('ack',{id,sequence:e.sequence})).status,200);}}}return events;
   };
   assert.ok((await run('questions','Fix the program')).some(e=>e.type==='questions'));
   const execution=await run('execute','Yes, use GCC and return zero.');assert.ok(execution.some(e=>e.type==='success'),JSON.stringify(execution));
