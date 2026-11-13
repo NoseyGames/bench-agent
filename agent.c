@@ -235,7 +235,7 @@ gboolean api_start(Api *a,const char *key,char *payload) {
 }
 gboolean api_start_at(Api *a,const char *key,char *payload,const char *endpoint,gboolean json_mode) {
     api_clear(a); a->payload=payload;
-    gboolean cloud=!g_strcmp0(endpoint,"https://api.openai.com/v1/chat/completions");
+    gboolean cloud=!g_strcmp0(endpoint,"https://api.openai.com/v1/chat/completions")||!g_strcmp0(endpoint,"https://api.openai.com/v1/responses");
     GUri *uri=g_uri_parse(endpoint?endpoint:"",G_URI_FLAGS_NONE,NULL);
     const char *host=uri?g_uri_get_host(uri):NULL;
     gboolean local=uri && !g_strcmp0(g_uri_get_scheme(uri),"http") && host &&

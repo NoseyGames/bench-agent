@@ -7,6 +7,7 @@
 #include "project.h"
 #include "runner.h"
 #include "pc_control.h"
+#include "pc_agent.h"
 #include <json-glib/json-glib.h>
 #include <stdio.h>
 #include <string.h>
@@ -52,25 +53,30 @@ static const char *get(JsonObject *o,const char *key) {
     JsonNode *n=json_object_get_member(o,key);
     return n && JSON_NODE_HOLDS_VALUE(n) && json_node_get_value_type(n)==G_TYPE_STRING?json_node_get_string(n):"";
 }
-static char *complete(const char *key,char *request,GError **e) {
+static char *exchange(const char *key,char *request,GError **e) {
     Api a={0}; char *result=NULL;
+    if(!request)return NULL;
     if(!api_start_at(&a,key,request,endpoint,json_mode)) goto error;
     int status; while(!(status=api_poll(&a))&&!stopped) { if(pc_cancelled())stopped=1;g_usleep(20000); }
     if(stopped) { g_set_error_literal(e,G_IO_ERROR,G_IO_ERROR_CANCELLED,"Cancelled"); }
     else if(status<0) goto error;
     else if(a.status<200||a.status>=300) g_set_error(e,G_IO_ERROR,G_IO_ERROR_FAILED,"Model server returned HTTP %ld: %.600s",a.status,a.body->str);
-    else result=completion_content(a.body->str,e);
+    else result=g_strdup(a.body->str);
     api_clear(&a); return result;
 error:
     g_set_error_literal(e,G_IO_ERROR,G_IO_ERROR_FAILED,a.error?a.error:"API failure");
     api_clear(&a); return NULL;
+}
+static char *complete(const char *key,char *request,GError **e) {
+    char *body=exchange(key,request,e);if(!body)return NULL;
+    char *result=completion_content(body,e);g_free(body);return result;
 }
 int main(int argc,char **argv) {
     setvbuf(stdin,NULL,_IONBF,0);
     if(argc==2&&!strcmp(argv[1],"--desktop-windows")){GError *error=NULL;char *list=pc_windows(&error);if(list){puts(list);g_free(list);return 0;}fprintf(stderr,"%s\n",error?error->message:"Window enumeration failed");g_clear_error(&error);return 1;}
     signal(SIGTERM,stop); signal(SIGINT,stop);
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    GError *e=NULL; Project project={0}; Plan plan={0}; Runner runner={0};PcSession pc={0};PcAction action={0};
+    GError *e=NULL; Project project={0}; Plan plan={0}; Runner runner={0};PcSession pc={0};PcAction action={0};PcAgent desktop={0};char *desktop_endpoint=NULL;
     JsonParser *parser=json_parser_new(); char *input=line(),*context=NULL,*response=NULL;
     GString *feedback=g_string_new(NULL); int result=1; guint rounds=0,reads=0;
     if(!input || !json_parser_load_from_data(parser,input,-1,&e) ||
@@ -95,23 +101,48 @@ int main(int argc,char **argv) {
         emit("questions",NULL,text->str,NULL); g_string_free(text,TRUE); questions_clear(&q); result=0; goto done;
     }
     if(*get(o,"desktopWindow")) {
+        gboolean responses=!strcmp(get(o,"desktopProtocol"),"responses")||!strcmp(endpoint,"https://api.openai.com/v1/chat/completions");
+        if(responses){
+            const char *suffix="/chat/completions";
+            if(!g_str_has_suffix(endpoint,suffix)){g_set_error_literal(&e,G_IO_ERROR,G_IO_ERROR_INVALID_ARGUMENT,"Desktop endpoint must end in /chat/completions");goto done;}
+            char *base=g_strndup(endpoint,strlen(endpoint)-strlen(suffix));desktop_endpoint=g_strconcat(base,"/responses",NULL);g_free(base);endpoint=desktop_endpoint;
+        }
+        pc_agent_init(&desktop,responses,model,task,answers);
         if(!pc_open(&pc,get(o,"desktopWindow"),&e))goto done;
         emit("desktop","screenshot","Capture the selected app and send its visible contents to the selected vision model. Ctrl+Alt+Shift+F10 stops desktop control.",NULL);
         if(!ack()||!pc_capture(&pc,&e))goto done;
         emit("screenshot",NULL,pc.image,NULL);
+        if(!pc_agent_observe(&desktop,&pc,"Initial approved screenshot. No desktop input has been sent.",&e))goto done;
         for(guint turn=0;turn<24&&!stopped;turn++){
-            emit("status",NULL,"Inspecting the app screenshot with your selected vision model",NULL);
+            emit("status",NULL,"Observing the app and checking the previous result",NULL);
             g_clear_pointer(&response,g_free);
-            response=complete(key,pc_request(model,task,answers,&pc,feedback->str),&e);
-            if(!response||!pc_parse(response,&action,&e))goto done;
-            if(!strcmp(action.kind,"done")){emit("review",NULL,action.reason,NULL);result=0;goto done;}
+            char *body=exchange(key,pc_agent_request(&desktop,&e),&e);
+            if(!body)goto done;
+            response=pc_agent_accept(&desktop,body,&action,&e);g_free(body);
+            if(!response)goto done;
+            char *frame=g_strdup_printf("%u",desktop.frame);
+            emit("observation",frame,desktop.observation,NULL);g_free(frame);
+            emit("verification",desktop.verification,desktop.evidence,NULL);
+            if(!strcmp(action.kind,"done")){
+                gboolean completed=!strcmp(desktop.outcome,"completed");
+                char *summary=g_strdup_printf("Model assessment: %s\n%s\nVisible evidence: %s",completed?"completed":"blocked",action.reason,desktop.evidence);
+                emit("review",completed?"desktop-completed":"desktop-blocked",summary,NULL);g_free(summary);result=completed?0:1;goto done;
+            }
             emit("desktop",action.kind,response,pc.image);
             if(!ack()||pc_cancelled())goto done;
+            if(strcmp(action.kind,"screenshot")&&!pc_revalidate(&pc,&e)){
+                if(g_error_matches(e,G_IO_ERROR,G_IO_ERROR_WOULD_BLOCK)){
+                    emit("replan",NULL,"Screen changed or the observation expired. No input was sent; inspecting a fresh frame before asking again.",NULL);
+                    g_clear_error(&e);emit("screenshot",NULL,pc.image,NULL);
+                    if(!pc_agent_observe(&desktop,&pc,"NOT EXECUTED: stale screenshot. Replan from this frame; the prior approval is spent.",&e))goto done;
+                    pc_action_clear(&action);continue;
+                }
+                goto done;
+            }
             if(strcmp(action.kind,"screenshot")&&!pc_execute(&pc,&action,&e))goto done;
-            g_string_append_printf(feedback,"\nExecuted: %s\n",response);
-            if(feedback->len>64000)g_string_erase(feedback,0,feedback->len-64000);
             if(!pc_capture(&pc,&e))goto done;
             emit("screenshot",NULL,pc.image,NULL);
+            if(!pc_agent_observe(&desktop,&pc,!strcmp(action.kind,"screenshot")?"Screenshot captured; no input sent.":"Input delivered to Windows. Application outcome is NOT yet verified. Compare this screenshot with the expected result.",&e))goto done;
             pc_action_clear(&action);
         }
         emit("error",NULL,"Desktop session stopped at its 24-action limit or emergency stop",NULL);goto done;
@@ -188,7 +219,7 @@ int main(int argc,char **argv) {
 done:
     if(e) emit("error",NULL,e->message,NULL);
     else if(result && !response) emit("error",NULL,"Invalid request or interrupted input",NULL);
-    runner_clear(&runner); project_clear(&project); plan_clear(&plan);pc_action_clear(&action);pc_clear(&pc); g_clear_error(&e);
+    runner_clear(&runner); project_clear(&project); plan_clear(&plan);pc_action_clear(&action);pc_clear(&pc);pc_agent_clear(&desktop);g_free(desktop_endpoint); g_clear_error(&e);
     g_free(input); g_free(context); g_free(response); g_string_free(feedback,TRUE);
     g_object_unref(parser); curl_global_cleanup(); return result;
 }

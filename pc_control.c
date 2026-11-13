@@ -89,9 +89,63 @@ gboolean pc_capture(PcSession *s,GError **e){
     if(dc)DeleteDC(dc);
     if(screen)ReleaseDC(NULL,screen);
     if(!ok){if(pix)g_object_unref(pix);return fail(e,"Screen capture failed; protected/secure desktops are unsupported.");}
-    char *png=NULL;gsize bytes=0;ok=gdk_pixbuf_save_to_buffer(pix,&png,&bytes,"png",e,NULL);g_object_unref(pix);if(!ok)return FALSE;
+    char *png=NULL;gsize bytes=0;ok=gdk_pixbuf_save_to_buffer(pix,&png,&bytes,"png",e,NULL);
+    guchar *packed=ok?g_try_malloc_n((gsize)iw*ih,3):NULL;
+    if(ok&&!packed){g_free(png);g_object_unref(pix);return fail(e,"Not enough memory to retain the screen observation.");}
+    if(ok){const guchar *rgb=gdk_pixbuf_get_pixels(pix);int stride=gdk_pixbuf_get_rowstride(pix);for(int y=0;y<ih;y++)memcpy(packed+(gsize)y*iw*3,rgb+(gsize)y*stride,(gsize)iw*3);}
+    g_object_unref(pix);if(!ok){g_free(png);return FALSE;}
+    RECT client;POINT origin={0,0};
+    if(!GetClientRect(window_of(s),&client)||!ClientToScreen(window_of(s),&origin)){
+        g_free(packed);g_free(png);return fail(e,"Cannot read app client bounds.");
+    }
+    int cl=CLAMP(origin.x,r.left,r.right),ct=CLAMP(origin.y,r.top,r.bottom);
+    int cr=CLAMP(origin.x+client.right,r.left,r.right),cb=CLAMP(origin.y+client.bottom,r.top,r.bottom);
+    int cx=(int)((gint64)(cl-r.left)*iw/w),cy=(int)((gint64)(ct-r.top)*ih/h);
+    int cw=(int)((gint64)(cr-r.left)*iw/w)-cx,ch=(int)((gint64)(cb-r.top)*ih/h)-cy;
+    if(cw<1||ch<1){g_free(packed);g_free(png);return fail(e,"App client area is off-screen or unavailable.");}
+    RECT after;
+    if(!valid(s,e)){g_free(packed);g_free(png);return FALSE;}
+    if(GetForegroundWindow()!=window_of(s)||!GetWindowRect(window_of(s),&after)){
+        g_free(packed);g_free(png);return fail(e,"Focus changed during capture. No observation was accepted.");
+    }
+    after.left=MAX(after.left,vx);after.top=MAX(after.top,vy);after.right=MIN(after.right,vx+vw);after.bottom=MIN(after.bottom,vy+vh);
+    if(after.left!=r.left||after.top!=r.top||after.right!=r.right||after.bottom!=r.bottom){
+        g_free(packed);g_free(png);return fail(e,"App bounds changed during capture. No observation was accepted.");
+    }
     char *base=g_base64_encode((guchar*)png,bytes);g_free(png);g_free(s->image);s->image=g_strconcat("data:image/png;base64,",base,NULL);g_free(base);
-    s->left=r.left;s->top=r.top;s->width=w;s->height=h;s->image_width=iw;s->image_height=ih;return TRUE;
+    g_free(s->pixels);s->pixels=packed;
+    s->left=r.left;s->top=r.top;s->width=w;s->height=h;s->image_width=iw;s->image_height=ih;
+    s->client_x=cx;s->client_y=cy;s->client_width=cw;s->client_height=ch;s->captured_us=g_get_monotonic_time();return TRUE;
+}
+gboolean pc_revalidate(PcSession *s,GError **e){
+    if(!s->image||!s->pixels||s->captured_us<=0)return fail(e,"Capture an approved screenshot before validating desktop input.");
+    /* Do not mutate the old geometry until comparison is complete. pc_capture
+     * owns only the newly allocated frame in this temporary session. */
+    PcSession fresh=*s;fresh.image=NULL;fresh.pixels=NULL;
+    if(!pc_capture(&fresh,e)){g_free(fresh.image);g_free(fresh.pixels);return FALSE;}
+    const char *stale=NULL;
+    if(fresh.captured_us-s->captured_us>PC_OBSERVATION_MAX_AGE_US)
+        stale="The observation expired while the action was being planned or approved. No input was sent. Review the fresh observation.";
+    else if(fresh.left!=s->left||fresh.top!=s->top||fresh.width!=s->width||fresh.height!=s->height||fresh.image_width!=s->image_width||fresh.image_height!=s->image_height||fresh.client_x!=s->client_x||fresh.client_y!=s->client_y||fresh.client_width!=s->client_width||fresh.client_height!=s->client_height)
+        stale="The app moved, resized, or changed its client bounds after observation. No input was sent. Replan from the fresh observation.";
+    else{
+        /* Ignore non-client focus decoration and tiny caret changes. At least
+         * 80 significantly changed RGB pixels is conservative for text/buttons,
+         * but is deliberately a heuristic: animation can trigger it and small
+         * semantic changes can evade it. Approval remains necessary. */
+        guint changed=0;
+        for(int y=s->client_y;y<s->client_y+s->client_height&&!stale;y++){
+            for(int x=s->client_x;x<s->client_x+s->client_width;x++){
+                gsize p=((gsize)y*s->image_width+x)*3;
+                if(ABS((int)s->pixels[p]-fresh.pixels[p])>24||ABS((int)s->pixels[p+1]-fresh.pixels[p+1])>24||ABS((int)s->pixels[p+2]-fresh.pixels[p+2])>24){
+                    if(++changed>=80){stale="The visible app content changed after observation. No input was sent. Replan and approve the new action.";break;}
+                }
+            }
+        }
+    }
+    g_free(s->image);g_free(s->pixels);*s=fresh;
+    if(stale){g_set_error_literal(e,G_IO_ERROR,G_IO_ERROR_WOULD_BLOCK,stale);return FALSE;}
+    return TRUE;
 }
 static gboolean ready(PcSession *s,GError **e){
     if(!valid(s,e))return FALSE;
@@ -113,20 +167,48 @@ static gboolean inputs(INPUT *v,UINT n,GError **e){
     return fail(e,"Windows rejected input (possibly an elevated or protected app). No elevation is attempted.");
 }
 static gboolean pair(WORD key,WORD unicode,GError **e){INPUT v[2]={{0}};v[0].type=v[1].type=INPUT_KEYBOARD;v[0].ki.wVk=v[1].ki.wVk=key;v[0].ki.wScan=v[1].ki.wScan=unicode;v[0].ki.dwFlags=unicode?KEYEVENTF_UNICODE:0;v[1].ki.dwFlags=v[0].ki.dwFlags|KEYEVENTF_KEYUP;return inputs(v,2,e);}
+static gboolean modifiers_released(GError **e){
+    if((GetAsyncKeyState(VK_CONTROL)|GetAsyncKeyState(VK_MENU)|GetAsyncKeyState(VK_SHIFT)|GetAsyncKeyState(VK_LWIN)|GetAsyncKeyState(VK_RWIN))&0x8000)
+        return fail(e,"Release modifier keys before desktop input. Input stopped.");
+    return TRUE;
+}
 gboolean pc_execute(PcSession *s,const PcAction *a,GError **e){
     if(!s->image)return fail(e,"Capture an approved screenshot before sending input.");
     if(!focus(s,e)||!ready(s,e))return FALSE;
-    if((GetAsyncKeyState(VK_CONTROL)|GetAsyncKeyState(VK_MENU)|GetAsyncKeyState(VK_SHIFT)|GetAsyncKeyState(VK_LWIN)|GetAsyncKeyState(VK_RWIN))&0x8000)return fail(e,"Release modifier keys before desktop input.");
+    if(!modifiers_released(e))return FALSE;
     if(!strcmp(a->kind,"move")||!strcmp(a->kind,"click")||!strcmp(a->kind,"scroll")){
         if(a->x>=s->image_width||a->y>=s->image_height)return fail(e,"Coordinates are outside the latest screenshot.");
         POINT start,target={s->left+(LONG)((gint64)a->x*s->width/s->image_width),s->top+(LONG)((gint64)a->y*s->height/s->image_height)};GetCursorPos(&start);
         for(int i=1;i<=50;i++){if(!ready(s,e))return FALSE;double t=i/50.0;t=t*t*(3-2*t);if(!SetCursorPos(start.x+(int)((target.x-start.x)*t),start.y+(int)((target.y-start.y)*t)))return fail(e,"Cannot move cursor.");Sleep(20);}
-        if(!ready(s,e))return FALSE;
+        if(!ready(s,e)||!modifiers_released(e))return FALSE;
         if(GetAncestor(WindowFromPoint(target),GA_ROOT)!=window_of(s))return fail(e,"Another window covers the target point. Input stopped.");
         if(!strcmp(a->kind,"click")){INPUT v[2]={{0}};v[0].type=v[1].type=INPUT_MOUSE;v[0].mi.dwFlags=MOUSEEVENTF_LEFTDOWN;v[1].mi.dwFlags=MOUSEEVENTF_LEFTUP;return inputs(v,2,e);}
         if(!strcmp(a->kind,"scroll")){INPUT v={0};v.type=INPUT_MOUSE;v.mi.dwFlags=MOUSEEVENTF_WHEEL;v.mi.mouseData=(DWORD)(a->delta*WHEEL_DELTA);return inputs(&v,1,e);}return TRUE;
     }
-    if(!strcmp(a->kind,"type")){glong count=0;gunichar2 *text=g_utf8_to_utf16(a->text,-1,NULL,&count,e);if(!text)return FALSE;gboolean ok=TRUE;for(glong i=0;i<count;i++){if(!ready(s,e)||!pair(text[i]=='\n'?VK_RETURN:0,text[i]=='\n'?0:text[i],e)){ok=FALSE;break;}Sleep(30);}g_free(text);return ok;}
+    if(!strcmp(a->kind,"type")){
+        glong count=0;gunichar2 *text=g_utf8_to_utf16(a->text,-1,NULL,&count,e);if(!text)return FALSE;
+        gboolean ok=TRUE;
+        for(glong i=0;i<count;i++){
+            if(!ready(s,e)||!modifiers_released(e)){ok=FALSE;break;}
+            if(text[i]=='\n')ok=pair(VK_RETURN,0,e);
+            else{
+                /* Deliver a surrogate pair together so cancellation cannot
+                 * split a Unicode code point between the two UTF-16 units. */
+                UINT units=text[i]>=0xd800&&text[i]<=0xdbff&&i+1<count?2:1;
+                INPUT v[4]={{0}};
+                for(UINT u=0;u<units;u++){
+                    v[u*2].type=v[u*2+1].type=INPUT_KEYBOARD;
+                    v[u*2].ki.wScan=v[u*2+1].ki.wScan=text[i+u];
+                    v[u*2].ki.dwFlags=KEYEVENTF_UNICODE;
+                    v[u*2+1].ki.dwFlags=KEYEVENTF_UNICODE|KEYEVENTF_KEYUP;
+                }
+                ok=inputs(v,units*2,e);i+=units-1;
+            }
+            if(!ok)break;
+            Sleep(30);
+        }
+        g_free(text);return ok;
+    }
     if(!strcmp(a->kind,"key")){
         WORD modifier=0,key=0;const char *k=a->text;if(g_str_has_prefix(k,"Ctrl+")){modifier=VK_CONTROL;k+=5;}else if(g_str_has_prefix(k,"Shift+")){modifier=VK_SHIFT;k+=6;}
         const char *names[]={"Enter","Tab","Escape","Backspace","Delete","Left","Right","Up","Down","Home","End","PageUp","PageDown",NULL};WORD codes[]={VK_RETURN,VK_TAB,VK_ESCAPE,VK_BACK,VK_DELETE,VK_LEFT,VK_RIGHT,VK_UP,VK_DOWN,VK_HOME,VK_END,VK_PRIOR,VK_NEXT};
@@ -139,14 +221,15 @@ gboolean pc_execute(PcSession *s,const PcAction *a,GError **e){
     }
     return fail(e,"Unsupported input action.");
 }
-void pc_clear(PcSession *s){if(hotkey_registered)UnregisterHotKey(NULL,0xB31);hotkey_registered=FALSE;g_free(s->image);memset(s,0,sizeof *s);}
+void pc_clear(PcSession *s){if(hotkey_registered)UnregisterHotKey(NULL,0xB31);hotkey_registered=FALSE;g_free(s->image);g_free(s->pixels);memset(s,0,sizeof *s);}
 #else
 gboolean pc_cancelled(void){return FALSE;}
 char *pc_windows(GError **e){fail(e,"Desktop control is supported on Windows only.");return NULL;}
 gboolean pc_open(PcSession *s,const char *id,GError **e){(void)s;(void)id;return fail(e,"Desktop control is supported on Windows only.");}
 gboolean pc_capture(PcSession *s,GError **e){(void)s;return fail(e,"Desktop control is supported on Windows only.");}
+gboolean pc_revalidate(PcSession *s,GError **e){(void)s;return fail(e,"Desktop control is supported on Windows only.");}
 gboolean pc_execute(PcSession *s,const PcAction *a,GError **e){(void)s;(void)a;return fail(e,"Desktop control is supported on Windows only.");}
-void pc_clear(PcSession *s){g_free(s->image);memset(s,0,sizeof *s);}
+void pc_clear(PcSession *s){g_free(s->image);g_free(s->pixels);memset(s,0,sizeof *s);}
 #endif
 
 char *pc_request(const char *model,const char *task,const char *answers,const PcSession *s,const char *history){

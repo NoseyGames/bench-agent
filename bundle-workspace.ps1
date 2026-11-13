@@ -43,7 +43,8 @@ start "" "%~dp0Bench.exe"
 # Source package contains the supplied frontend and both C entry points.
 $sourceDir=Join-Path $dist 'source'
 New-Item -ItemType Directory -Path (Join-Path $sourceDir 'workspace-ui/tests') -Force | Out-Null
-foreach($file in @('main.c','desktop.c','engine.c','pc_control.c','pc_control.h','agent.c','agent.h','project.c','project.h','runner.c','runner.h','cursor.c','cursor.h','test_agent.c','test_pc.c','Makefile','README.md','WORKSPACE-README.md','VALIDATION.md','Launch-workspace.cmd','bundle-workspace.ps1','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $sourceDir}
+foreach($file in @('main.c','desktop.c','engine.c','pc_control.c','pc_control.h','pc_agent.c','pc_agent.h','agent.c','agent.h','project.c','project.h','runner.c','runner.h','cursor.c','cursor.h','test_agent.c','test_pc.c','test_pc_agent.c','Makefile','README.md','WORKSPACE-README.md','VALIDATION.md','GITHUB-BUILD.md','Launch-workspace.cmd','bundle-workspace.ps1','bundle-windows.ps1','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $sourceDir}
+Copy-Item -LiteralPath (Join-Path $root '.github') -Destination $sourceDir -Recurse
 Copy-Item -LiteralPath (Join-Path $root 'assets') -Destination $sourceDir -Recurse
 Copy-Item -LiteralPath (Join-Path $root 'licenses') -Destination $sourceDir -Recurse
 foreach($file in ($frontend+@('build.mjs','package.json','README.md'))) {Copy-Item -LiteralPath (Join-Path $root "workspace-ui/$file") -Destination (Join-Path $sourceDir 'workspace-ui')}

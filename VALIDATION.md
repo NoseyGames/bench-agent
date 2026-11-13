@@ -179,3 +179,14 @@ Results: both C application binaries rebuilt; 16 C tests passed; 27 JavaScript/h
 ## Automatic app-history import
 
 Ran `node --test tests/*.test.mjs`: 38 tests passed, including new Codex/Claude Code/Continue/Cursor fixtures, unchanged source-file checks, and authenticated discovery/import endpoints. Existing real C engine build/test integration also passed. JavaScript syntax checks and frontend build passed. Live Codex discovery and bounded transcript parsing were checked using counts only; no private transcripts were copied into release artifacts. Other app formats were tested with fixtures, not installed live apps. The new import dialog has not been interactively browser-tested.
+# Desktop tool loop — 2026-11-13
+
+- `make all check`: passed 27 C tests (16 core, 3 native desktop protocol, 8 desktop-agent protocol). Compilation uses C11, `-Wall -Wextra -Wpedantic` with no compiler warnings.
+- `node --test tests/*.test.mjs` from `workspace-ui`: 43 passed. Covers real C project builds/tests, loopback authentication, read-only and one-use approval/denial behavior.
+- `./test-pc.exe --interactive`: passed in a disposable Win32 fixture, including real click, Unicode typing, key input, screen capture, same-window content changes, observation expiry, changed bounds and emergency stop. One initial unchanged-frame check failed during development; it did not reproduce in subsequent runs. The fixture now paints synchronously before reporting readiness. Pixel comparison remains heuristic; this is not proof that arbitrary UI changes are detected.
+- `node tests/desktop-smoke.mjs`: both local Chat Completions and Responses paths passed through the real C/libcurl/native-input loop against deterministic localhost model replies. Three observations per path; Responses retained encrypted reasoning, commentary phase, call IDs and screenshot tool outputs unchanged. Unrelated project content was excluded.
+- `node build.mjs` and syntax checks of changed JavaScript: passed.
+- Browser UI check using `node tests/desktop-preview.mjs`: selected the disposable app, completed clarification, approved screenshot capture, inspected the compact action/evidence dialog, and denied a click. No closed/archived that chat and opened a fresh one. Screenshot: `bench-observe-act-verify.png`.
+
+Not run: live OpenAI/Astra inference, live local-model inference, broad third-party app tasks, macOS/Linux desktop input. Model evidence and completed/blocked reports remain model assessments. Windows is the only native-input platform. The supplied local compatible model must support image input and the action schema. The new eight protocol tests run in GitHub's existing `make check` step; CI results must be checked on the uploaded commit separately.
+

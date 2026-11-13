@@ -45,7 +45,7 @@ foreach ($part in @('share/glib-2.0/schemas','share/icons/Adwaita','share/icons/
 New-Item -ItemType Directory -Path (Join-Path $dist 'certs') | Out-Null
 Copy-Item -LiteralPath (Join-Path $Prefix 'etc/ssl/certs/ca-bundle.crt') -Destination (Join-Path $dist 'certs/ca-bundle.crt')
 Copy-Item -LiteralPath (Join-Path $project 'assets') -Destination $dist -Recurse
-foreach ($name in @('README.md','VALIDATION.md','main.c','engine.c','pc_control.c','pc_control.h','agent.c','agent.h','project.c','project.h','runner.c','runner.h','cursor.c','cursor.h','Makefile','test_agent.c','test_pc.c','LICENSE')) {
+foreach ($name in @('README.md','VALIDATION.md','main.c','engine.c','pc_control.c','pc_control.h','pc_agent.c','pc_agent.h','agent.c','agent.h','project.c','project.h','runner.c','runner.h','cursor.c','cursor.h','Makefile','test_agent.c','test_pc.c','test_pc_agent.c','LICENSE')) {
     Copy-Item -LiteralPath (Join-Path $project $name) -Destination $dist
 }
 @'
