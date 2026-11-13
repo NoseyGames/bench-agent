@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light"><title>Bench</title><link rel="stylesheet" href="./style.css"><link rel="stylesheet" href="./workspace.css"></head>
+<body>
+<div id="window-toolbar"><button data-action="back" aria-label="Back" data-icon="back"></button><button data-action="forward" aria-label="Forward" data-icon="forward"></button><button data-action="collapse" aria-label="Toggle sidebar" data-icon="panel"></button><span class="window-divider"></span><button data-action="file-menu">File</button><button data-action="edit-menu">Edit</button><button data-action="view-menu">View</button><button data-action="help-menu">Help</button></div>
+<div id="workspace-shell">
+<aside id="sidebar" aria-label="Chats">
+  <div class="sidebar-heading"><span>Bench</span><button data-action="search" aria-label="Search chats" data-icon="search"></button><button data-action="collapse" aria-label="Hide sidebar" data-icon="panel"></button></div>
+  <button class="new-chat" data-action="new"><span data-icon="edit"></span>New chat<span class="shortcut">Ctrl N</span></button>
+  <button id="import-chats" data-action="import-chats"><span data-icon="download"></span>Import chats</button><div id="navigation"></div>
+  <div class="sidebar-footer"><button data-action="settings"><span data-icon="settings"></span>Settings</button><button data-action="archives" aria-label="Archived chats" data-icon="archive"></button></div>
+</aside>
+<div id="sidebar-resizer" role="separator" tabindex="0" aria-label="Resize sidebar" aria-orientation="vertical"></div>
+<main id="chat-main">
+  <header><button id="show-sidebar" data-action="collapse" aria-label="Show sidebar" data-icon="panel"></button><span data-icon="folder"></span><span id="chat-title">New chat</span><div class="header-actions"><button data-action="review" aria-label="Open changes" title="Changes" data-icon="diff"></button><button data-action="chat-menu" aria-label="Chat options" data-icon="more"></button></div></header>
+  <section id="conversation" aria-label="Conversation"><div id="messages"></div></section>
+  <div class="composer-wrap"><div id="attachments"></div><form id="composer"><label class="sr-only" for="prompt">Message</label><textarea id="prompt" placeholder="Work on anything" rows="2"></textarea><div class="composer-tools"><button type="button" data-action="attach-menu" aria-label="Add files and more" data-icon="plus"></button><button type="button" id="permission-button" data-action="permissions" aria-label="Change permissions"><span data-icon="shield"></span><span id="permission-label">Workspace</span></button><span class="composer-spacer"></span><button type="button" id="model-button" data-action="model" aria-label="Choose model"><span id="model-label">Local</span><span id="effort-label">Medium</span><span data-icon="down"></span></button><button type="submit" id="send" aria-label="Save message" data-icon="arrow"></button></div></form><div class="composer-note"><label class="project-picker"><span data-icon="folder"></span><select id="project-select" aria-label="Project"></select></label><span id="connection-status">Local workspace</span><span id="send-hint">Enter to send · Shift Enter for a new line</span></div><div id="queue-status" hidden></div></div>
+</main>
+<aside id="review" aria-label="Changes" hidden><div class="review-heading"><strong>Changes</strong><button data-action="close-review" aria-label="Close changes" data-icon="close"></button></div><div class="review-toolbar"><span id="diff-count">No changes loaded</span><button data-action="import-diff">Import diff</button></div><div id="diff-content"><div class="panel-empty"><span data-icon="diff"></span><h3>Review your changes</h3><p>Open a .diff or .patch file to view it here.</p></div></div></aside>
+</div>
+<section id="settings-view" aria-label="Settings" hidden><aside class="settings-sidebar"><div class="settings-heading"><strong>Settings</strong><button id="settings-back" aria-label="Back to chat" data-icon="close"></button></div><div class="settings-search-wrap"><span data-icon="search"></span><input id="settings-search" placeholder="Search" aria-label="Search settings"></div><div class="settings-category">Personal</div><nav id="settings-nav" aria-label="Settings sections"></nav></aside><div id="settings-content" tabindex="-1"></div><button id="settings-mobile-back" aria-label="Close settings" data-icon="close"></button></section>
+<input id="file-input" type="file" multiple hidden><input id="diff-input" type="file" accept=".diff,.patch,text/plain" hidden>
+<dialog id="dialog"><form id="dialog-form"></form></dialog><div id="toast" role="status" hidden></div>
+<div id="popover" popover="auto" role="menu"></div>
+<link rel="icon" href="./brand.svg"><link rel="stylesheet" href="./desktop.css"><link rel="stylesheet" href="./brand.css"><link rel="stylesheet" href="./calm.css"><script type="module" src="./desktop.js"></script>
+</body></html>

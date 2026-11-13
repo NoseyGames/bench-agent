@@ -1,0 +1,6 @@
+{
+  "name": "unbranded-workspace-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {"start": "node desktop-host.mjs --open", "build": "node build.mjs", "test": "node --test tests/*.test.mjs"}
+}
