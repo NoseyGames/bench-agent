@@ -30,6 +30,7 @@ char *completion_content(const char *body, GError **error);
 char *make_request(const char *model, const char *task,
                    const char *questions, const char *answers,
                    const char *context, const char *feedback);
+char *make_request_ex(const char *model,const char *task,const char *questions,const char *answers,const char *context,const char *feedback,gboolean computer);
 /* Creates one new file, exclusively, without overwriting existing content. */
 gboolean save_file(const char *dir, const AgentFile *file, GError **error);
 

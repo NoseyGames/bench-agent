@@ -64,11 +64,12 @@ int main(int argc,char **argv) {
     JsonObject *o=json_node_get_object(json_parser_get_root(parser));
     if(*get(o,"endpoint")) endpoint=get(o,"endpoint");
     if(json_object_has_member(o,"jsonMode")) json_mode=json_object_get_boolean_member(o,"jsonMode");
+    gboolean computer=json_object_has_member(o,"computerMode") && json_object_get_boolean_member(o,"computerMode");
     const char *key=get(o,"key"),*model=get(o,"model"),*task=get(o,"task"),*answers=get(o,"answers"),*questions=get(o,"questions");
     if(!project_open(&project,get(o,"root"),&e) || !(context=project_context(&project,&e))) goto done;
     emit("status","project","Project inspected",NULL);
     if(!strcmp(get(o,"phase"),"questions") && argc==1) {
-        response=complete(key,make_request(model,task,NULL,NULL,context,NULL),&e);
+        response=complete(key,make_request_ex(model,task,NULL,NULL,context,NULL,computer),&e);
         Questions q={0}; if(!response || !parse_questions(response,&q,&e)) goto done;
         GString *text=g_string_new(NULL);
         for(guint i=0;i<q.count;i++) g_string_append_printf(text,"%u. %s\n",i+1,q.text[i]);
@@ -79,7 +80,7 @@ int main(int argc,char **argv) {
         emit("status","planning","Planning from the current project and command results",NULL);
         if(argc==3 && !strcmp(argv[1],"--plan")) {
             if(rounds || !g_file_get_contents(argv[2],&response,NULL,&e)) break;
-        } else response=complete(key,make_request(model,task,questions,answers,context,feedback->str),&e);
+        } else response=complete(key,make_request_ex(model,task,questions,answers,context,feedback->str,computer),&e);
         if(!response || !parse_plan(response,&plan,&e)) goto done;
         if(plan.read_files->len) {
             if(++reads>3) { emit("error",NULL,"Additional file read limit reached",NULL); goto done; }
@@ -136,13 +137,13 @@ int main(int argc,char **argv) {
             if(ok&&!strcmp(c->kind,"test")) tested=TRUE;
             runner_clear(&runner); if(stopped) goto done;
         }
-        if(passed&&built&&tested) { result=0; emit("success",project.run_dir,"Build and tests passed",NULL); goto done; }
-        emit("status","repair","Build/test verification incomplete; requesting repair",NULL);
+        if(passed&&((built&&tested)||(computer&&plan.commands->len>0))) { result=0; emit("success",project.run_dir,computer?"Approved commands completed successfully; review their output for task-specific verification":"Build and tests passed",NULL); goto done; }
+        emit("status","repair",computer?"Command verification incomplete; requesting repair":"Build/test verification incomplete; requesting repair",NULL);
         if(feedback->len>192000) g_string_erase(feedback,0,feedback->len-192000);
-        g_string_append(feedback,"\nCorrect the failure and rerun BOTH build and tests.\n");
+        g_string_append(feedback,computer?"\nCorrect the failure and run commands that verify the requested outcome.\n":"\nCorrect the failure and rerun BOTH build and tests.\n");
         g_clear_pointer(&context,g_free); context=project_context(&project,&e); if(!context) goto done;
     }
-    emit("error",NULL,"Stopped without passing both build and tests (maximum 3 rounds)",NULL);
+    emit("error",NULL,computer?"Stopped without successful command verification (maximum 3 rounds)":"Stopped without passing both build and tests (maximum 3 rounds)",NULL);
 done:
     if(e) emit("error",NULL,e->message,NULL);
     else if(result && !response) emit("error",NULL,"Invalid request or interrupted input",NULL);

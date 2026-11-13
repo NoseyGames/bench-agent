@@ -32,7 +32,7 @@ Copy-Item -LiteralPath (Join-Path $root 'licenses/node.txt') -Destination (Join-
 if(Test-Path -LiteralPath (Join-Path $Prefix 'share/licenses')) {Copy-Item -LiteralPath (Join-Path $Prefix 'share/licenses') -Destination (Join-Path $dist 'licenses/msys2') -Recurse}
 New-Item -ItemType Directory -Path (Join-Path $dist 'certs') | Out-Null
 Copy-Item -LiteralPath (Join-Path $Prefix 'etc/ssl/certs/ca-bundle.crt') -Destination (Join-Path $dist 'certs/ca-bundle.crt')
-$frontend=@('index.html','app.js','state.js','style.css','workspace.css','settings.js','preferences.js','appearance.js','desktop.js','desktop.css','desktop-host.mjs','app-history.mjs','ai.cur','connection.js','providers.mjs','brand.css','brand.svg','chat-import.js','first-run.js','calm.css','app-import.js')
+$frontend=@('index.html','app.js','state.js','style.css','workspace.css','settings.js','preferences.js','appearance.js','desktop.js','desktop.css','desktop-host.mjs','app-history.mjs','action-policy.mjs','ai.cur','connection.js','providers.mjs','brand.css','brand.svg','chat-import.js','first-run.js','calm.css','app-import.js','approval.js')
 New-Item -ItemType Directory -Path (Join-Path $dist 'workspace-ui') | Out-Null
 foreach($file in $frontend) {Copy-Item -LiteralPath (Join-Path $root "workspace-ui/$file") -Destination (Join-Path $dist 'workspace-ui')}
 foreach($file in @('Launch-workspace.cmd','WORKSPACE-README.md','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $dist}

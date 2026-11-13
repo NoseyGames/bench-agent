@@ -15,7 +15,7 @@ The C desktop entry point hides the host console; use **Quit** to stop the host.
 The default port is 47291; set `PORT` to another port if it is already occupied.
 Chat history belongs to that browser profile and port.
 
-1. Choose an existing folder with **Browse**, or paste its absolute path.
+1. Leave **Computer** selected to work without a project, or choose an existing folder with **Browse** / its absolute path.
    Folder paths are remembered per project group or ungrouped chat.
 2. Open **Models**. Choose Ollama, LM Studio, another local server, or OpenAI.
    For local servers, choose **Find models**, select an installed model, then
@@ -30,7 +30,7 @@ Chat history belongs to that browser profile and port.
 
 With edits disabled, Bench stops at a review report and proposed changes without applying them. Enable edits and resubmit the task when ready.
 
-The status report says **Succeeded** only when both a build and a test command
+In project mode, the status report says **Succeeded** only when both a build and a test command
 pass and all commands in that execution round succeed. Failed commands, API
 errors, cancellation and incomplete verification are surfaced as failures.
 Project tools such as GCC, Python, npm, or your build system must be on PATH.
@@ -231,3 +231,15 @@ Supported readers: Codex plain JSONL sessions and archives; Claude Code project 
 This searches known app-data locations, not every installed executable or the entire drive. Detected ChatGPT, Claude Desktop, and LM Studio data without a supported reader is labeled with an export fallback. **Import JSON file** remains available for exported histories.
 
 Imports are bounded to 24 MB per response and 64 MB per transcript. Browser storage has a smaller, browser-dependent quota; if saving fails, existing chats remain unchanged. Choose a smaller batch or export/remove older Bench chats. Local databases may require closing the source app before retrying. The bundled Node runtime includes SQLite support.
+
+## Computer mode and action permissions
+
+No project is required. **Open project → Use computer mode** clears the folder selection. Bench uses `%LOCALAPPDATA%/Bench/computer-workspace` as a small working directory. It does not scan your whole home directory for context. Approved commands can target other locations and automate programs through shell/PowerShell, subject to your normal account permissions. There is no automatic administrator elevation or screenshot-driven desktop-control tool.
+
+The host assesses each proposed command and file write before the C engine proceeds. All shell commands require permission, including seemingly harmless or disguised commands: arbitrary scripts cannot be reliably classified as safe. Recognized destructive command names receive a critical label; other commands receive a high label. File writes also require approval. The label explains risk; it is not a guarantee about the command's effects.
+
+A modal shows the exact action and working folder. **Yes — allow this action** authorizes that one action, then its visual preview continues. **No — close chat** stops the engine, archives the conversation, clears queued follow-ups, and opens a fresh chat. Escape means No. The host rejects replayed permissions and ordinary animation acknowledgements while approval is pending. Earlier completed changes remain; denial is not rollback.
+
+Permission covers the displayed command and its child processes. Bench cannot pause each internal operation within an approved script. File reads for context and model requests still follow the selected provider/settings. Commands run without an OS sandbox and can access the network. Computer-mode success means the approved commands exited successfully; inspect output for task-specific verification. Project mode continues requiring a successful build and test.
+
+Validated for this update: 16 C checks and 41 JavaScript integration tests, including actual no-project commands, missing/stale approvals, denial before execution, and denial closing the chat on the host. Live model-driven computer tasks remain untested.
