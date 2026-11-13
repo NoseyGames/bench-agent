@@ -3,11 +3,13 @@ PKG_CONFIG ?= pkg-config
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic
 CORE_PKGS = json-glib-1.0 gio-2.0 libcurl
+PC_PKGS = gdk-pixbuf-2.0
 GUI_PKGS = gtk+-3.0 $(CORE_PKGS)
 EXE =
 ifeq ($(OS),Windows_NT)
 EXE = .exe
 DESKTOP = Bench.exe
+PC_LIBS = -luser32 -lgdi32
 endif
 
 .PHONY: all check smoke smoke-repair smoke-readable clean
@@ -19,8 +21,8 @@ Bench.exe: desktop.c
 SOURCES = agent.c project.c runner.c
 HEADERS = agent.h project.h runner.h
 
-bench-engine$(EXE): engine.c $(SOURCES) $(HEADERS)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(shell $(PKG_CONFIG) --cflags $(CORE_PKGS)) engine.c $(SOURCES) -o $@ $(LDFLAGS) $(shell $(PKG_CONFIG) --libs $(CORE_PKGS))
+bench-engine$(EXE): engine.c pc_control.c pc_control.h $(SOURCES) $(HEADERS)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(shell $(PKG_CONFIG) --cflags $(CORE_PKGS) $(PC_PKGS)) engine.c pc_control.c $(SOURCES) -o $@ $(LDFLAGS) $(shell $(PKG_CONFIG) --libs $(CORE_PKGS) $(PC_PKGS)) $(PC_LIBS)
 
 visual-agent$(EXE): main.c $(SOURCES) $(HEADERS) cursor.c cursor.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(shell $(PKG_CONFIG) --cflags $(GUI_PKGS)) main.c $(SOURCES) cursor.c -o $@ $(LDFLAGS) $(shell $(PKG_CONFIG) --libs $(GUI_PKGS)) -lm
@@ -28,8 +30,12 @@ visual-agent$(EXE): main.c $(SOURCES) $(HEADERS) cursor.c cursor.h
 test-agent$(EXE): test_agent.c $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(shell $(PKG_CONFIG) --cflags $(CORE_PKGS)) test_agent.c $(SOURCES) -o $@ $(LDFLAGS) $(shell $(PKG_CONFIG) --libs $(CORE_PKGS))
 
-check: test-agent$(EXE)
+test-pc$(EXE): test_pc.c pc_control.c pc_control.h
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(shell $(PKG_CONFIG) --cflags $(CORE_PKGS) $(PC_PKGS)) test_pc.c pc_control.c -o $@ $(LDFLAGS) $(shell $(PKG_CONFIG) --libs $(CORE_PKGS) $(PC_PKGS)) $(PC_LIBS)
+
+check: test-agent$(EXE) test-pc$(EXE)
 	./test-agent$(EXE)
+	./test-pc$(EXE)
 
 smoke: visual-agent$(EXE)
 	./visual-agent$(EXE) --smoke

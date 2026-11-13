@@ -81,14 +81,14 @@ automatic dependency provisioning are not implemented by this adapter.
 
 ## Build from source
 
-Required for the C engine: C11 compiler, pkg-config, GLib/GIO, JSON-GLib, libcurl.
+Required for the C engine: C11 compiler, pkg-config, GLib/GIO, JSON-GLib, libcurl, GdkPixbuf.
 Node 22+ hosts the supplied UI, with **no npm packages**. GTK3 is only needed for
 the earlier native GUI (`visual-agent` target).
 
 Windows / MSYS2 UCRT64 shell:
 
 ```sh
-pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-json-glib mingw-w64-ucrt-x86_64-curl
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-json-glib mingw-w64-ucrt-x86_64-curl mingw-w64-ucrt-x86_64-gdk-pixbuf2
 make bench-engine.exe check
 ```
 
@@ -99,7 +99,7 @@ Set `OPENAI_CA_BUNDLE` to UCRT64's `etc/ssl/certs/ca-bundle.crt` if needed.
 macOS / Homebrew:
 
 ```sh
-brew install pkg-config json-glib curl node
+brew install pkg-config json-glib gdk-pixbuf curl node
 make bench-engine check
 node workspace-ui/desktop-host.mjs --open
 ```
@@ -107,7 +107,7 @@ node workspace-ui/desktop-host.mjs --open
 Debian/Ubuntu (install Node 22+ separately if the distro package is older):
 
 ```sh
-sudo apt install build-essential pkg-config libjson-glib-dev libcurl4-openssl-dev nodejs
+sudo apt install build-essential pkg-config libjson-glib-dev libgdk-pixbuf-2.0-dev libcurl4-openssl-dev nodejs
 make bench-engine check
 node workspace-ui/desktop-host.mjs --open
 ```
@@ -118,7 +118,7 @@ entered as a path. These platform runtimes have not been tested here.
 Exact direct engine compilation:
 
 ```sh
-cc -O2 -std=c11 -Wall -Wextra -Wpedantic $(pkg-config --cflags json-glib-1.0 gio-2.0 libcurl) engine.c agent.c project.c runner.c -o bench-engine $(pkg-config --libs json-glib-1.0 gio-2.0 libcurl)
+cc -O2 -std=c11 -Wall -Wextra -Wpedantic $(pkg-config --cflags json-glib-1.0 gio-2.0 libcurl gdk-pixbuf-2.0) engine.c pc_control.c agent.c project.c runner.c -o bench-engine $(pkg-config --libs json-glib-1.0 gio-2.0 libcurl gdk-pixbuf-2.0)
 ```
 
 Run checks from the project root, with the compiler and runtime DLLs on PATH:
@@ -234,7 +234,7 @@ Imports are bounded to 24 MB per response and 64 MB per transcript. Browser stor
 
 ## Computer mode and action permissions
 
-No project is required. **Open project → Use computer mode** clears the folder selection. Bench uses `%LOCALAPPDATA%/Bench/computer-workspace` as a small working directory. It does not scan your whole home directory for context. Approved commands can target other locations and automate programs through shell/PowerShell, subject to your normal account permissions. There is no automatic administrator elevation or screenshot-driven desktop-control tool.
+No project is required. **Open project → Use computer mode** clears the folder selection. Bench uses `%LOCALAPPDATA%/Bench/computer-workspace` as a small working directory. It does not scan your whole home directory for context. Approved commands can target other locations and automate programs through shell/PowerShell, subject to your normal account permissions. There is no automatic administrator elevation. Screenshot-driven input is available through **Control an app**, described below.
 
 The host assesses each proposed command and file write before the C engine proceeds. All shell commands require permission, including seemingly harmless or disguised commands: arbitrary scripts cannot be reliably classified as safe. Recognized destructive command names receive a critical label; other commands receive a high label. File writes also require approval. The label explains risk; it is not a guarantee about the command's effects.
 
@@ -243,3 +243,17 @@ A modal shows the exact action and working folder. **Yes — allow this action**
 Permission covers the displayed command and its child processes. Bench cannot pause each internal operation within an approved script. File reads for context and model requests still follow the selected provider/settings. Commands run without an OS sandbox and can access the network. Computer-mode success means the approved commands exited successfully; inspect output for task-specific verification. Project mode continues requiring a successful build and test.
 
 Validated for this update: 16 C checks and 41 JavaScript integration tests, including actual no-project commands, missing/stale approvals, denial before execution, and denial closing the chat on the host. Live model-driven computer tasks remain untested.
+
+## Actual desktop control (Windows)
+
+Open the app you want to operate, click **Control an app** in Bench's header, select its window, then **Use selected app**. Select a vision-capable OpenAI or local model and describe the task. Answer the clarification questions. App selection enables execution; composer **Read only** still blocks it. Use **Control an app → Use commands instead** to return to the shell/coding workflow.
+
+Before the first capture, Bench asks permission to capture the app's visible screen region and send it to the displayed model endpoint. Each subsequent move, left click, Unicode typing action, supported keystroke, or scroll also requires Yes/No. Its resulting screenshot is included in that approval. The dialog shows the previous screenshot, exact action, and destination. All inputs are treated as potentially consequential; model risk claims cannot bypass approval. **No** stops and archives the chat and clears the queue. Prior effects remain.
+
+The C engine uses Windows GDI capture and real cursor/SendInput operations. It observes again after each approved action, then requests one next action. Screenshots are resized to at most 1600 pixels on the longest edge, with coordinates mapped back to physical window pixels. Motion takes about one second and typing is paced. PNGs remain in session memory/UI; Bench does not save them to chat history. Your model provider may process or retain submitted images according to its own settings. A local vision model can keep inference on the PC.
+
+**Ctrl+Alt+Shift+F10** is global emergency stop, including during model calls and pending approval. Desktop control refuses to start if that shortcut cannot be registered. The ordinary Stop button remains available. After Yes, Windows attempts to foreground the chosen app; if blocked, focus that app within five seconds. Do not type or move windows while an action runs. Unexpected focus, process identity, or window-geometry changes stop input. Secure/UAC screens, elevated apps, cross-window popups and protected video surfaces are unsupported. No elevation or focus-lock bypass is attempted. Select another app explicitly for a new target.
+
+Capture reads the selected window's visible screen rectangle, including any overlays covering it. Close sensitive content first. A screenshot cannot reliably identify every dangerous button or prove an outcome. Every input requires approval, and the final report is the model's assessment of the latest screenshot. Sessions stop at 24 actions or the host's 30-minute timeout. A model without image support fails through the normal API error report.
+
+Validation commands: `make all check` (16 core checks + 3 desktop checks), then `cd workspace-ui` and `node --test tests/*.test.mjs` (43 tests). Explicit interactive checks, with runtime DLLs on PATH: `./test-pc.exe --interactive` from the source root, and `node tests/desktop-smoke.mjs` from workspace-ui. These operate only a disposable native test window. The first checks real mouse input, Unicode text, navigation keys, PNG capture, moved-window refusal, and the global emergency stop. The second checks clarification, real screenshots through C/libcurl, local multimodal requests, per-action approvals and real click/type execution with deterministic model replies. Actual LLM vision accuracy and arbitrary third-party apps are not established by these fixtures.

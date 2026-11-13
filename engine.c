@@ -6,10 +6,14 @@
 #include "agent.h"
 #include "project.h"
 #include "runner.h"
+#include "pc_control.h"
 #include <json-glib/json-glib.h>
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
+#ifdef G_OS_WIN32
+#include <windows.h>
+#endif
 
 static volatile sig_atomic_t stopped;
 static const char *endpoint="https://api.openai.com/v1/chat/completions";
@@ -35,7 +39,15 @@ static char *line(void) {
     if(!s->len || stopped) { g_string_free(s,TRUE); return NULL; }
     return g_string_free(s,FALSE);
 }
-static gboolean ack(void) { char *s=line(); gboolean ok=s&&!strcmp(s,"ack"); g_free(s); return ok; }
+static gboolean ack(void) {
+#ifdef G_OS_WIN32
+    /* Poll the pipe so the global emergency hotkey also works while waiting
+     * for a permission decision. stdin is unbuffered in main. */
+    DWORD available=0;
+    while(!stopped){if(pc_cancelled()){stopped=1;return FALSE;}if(!PeekNamedPipe(GetStdHandle(STD_INPUT_HANDLE),NULL,0,NULL,&available,NULL))return FALSE;if(available)break;Sleep(20);}
+#endif
+    char *s=line(); gboolean ok=s&&!strcmp(s,"ack"); g_free(s); return ok;
+}
 static const char *get(JsonObject *o,const char *key) {
     JsonNode *n=json_object_get_member(o,key);
     return n && JSON_NODE_HOLDS_VALUE(n) && json_node_get_value_type(n)==G_TYPE_STRING?json_node_get_string(n):"";
@@ -43,7 +55,7 @@ static const char *get(JsonObject *o,const char *key) {
 static char *complete(const char *key,char *request,GError **e) {
     Api a={0}; char *result=NULL;
     if(!api_start_at(&a,key,request,endpoint,json_mode)) goto error;
-    int status; while(!(status=api_poll(&a))&&!stopped) g_usleep(20000);
+    int status; while(!(status=api_poll(&a))&&!stopped) { if(pc_cancelled())stopped=1;g_usleep(20000); }
     if(stopped) { g_set_error_literal(e,G_IO_ERROR,G_IO_ERROR_CANCELLED,"Cancelled"); }
     else if(status<0) goto error;
     else if(a.status<200||a.status>=300) g_set_error(e,G_IO_ERROR,G_IO_ERROR_FAILED,"Model server returned HTTP %ld: %.600s",a.status,a.body->str);
@@ -54,9 +66,11 @@ error:
     api_clear(&a); return NULL;
 }
 int main(int argc,char **argv) {
+    setvbuf(stdin,NULL,_IONBF,0);
+    if(argc==2&&!strcmp(argv[1],"--desktop-windows")){GError *error=NULL;char *list=pc_windows(&error);if(list){puts(list);g_free(list);return 0;}fprintf(stderr,"%s\n",error?error->message:"Window enumeration failed");g_clear_error(&error);return 1;}
     signal(SIGTERM,stop); signal(SIGINT,stop);
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    GError *e=NULL; Project project={0}; Plan plan={0}; Runner runner={0};
+    GError *e=NULL; Project project={0}; Plan plan={0}; Runner runner={0};PcSession pc={0};PcAction action={0};
     JsonParser *parser=json_parser_new(); char *input=line(),*context=NULL,*response=NULL;
     GString *feedback=g_string_new(NULL); int result=1; guint rounds=0,reads=0;
     if(!input || !json_parser_load_from_data(parser,input,-1,&e) ||
@@ -74,6 +88,28 @@ int main(int argc,char **argv) {
         GString *text=g_string_new(NULL);
         for(guint i=0;i<q.count;i++) g_string_append_printf(text,"%u. %s\n",i+1,q.text[i]);
         emit("questions",NULL,text->str,NULL); g_string_free(text,TRUE); questions_clear(&q); result=0; goto done;
+    }
+    if(*get(o,"desktopWindow")) {
+        if(!pc_open(&pc,get(o,"desktopWindow"),&e))goto done;
+        emit("desktop","screenshot","Capture the selected app and send its visible contents to the selected vision model. Ctrl+Alt+Shift+F10 stops desktop control.",NULL);
+        if(!ack()||!pc_capture(&pc,&e))goto done;
+        emit("screenshot",NULL,pc.image,NULL);
+        for(guint turn=0;turn<24&&!stopped;turn++){
+            emit("status",NULL,"Inspecting the app screenshot with your selected vision model",NULL);
+            g_clear_pointer(&response,g_free);
+            response=complete(key,pc_request(model,task,answers,&pc,feedback->str),&e);
+            if(!response||!pc_parse(response,&action,&e))goto done;
+            if(!strcmp(action.kind,"done")){emit("review",NULL,action.reason,NULL);result=0;goto done;}
+            emit("desktop",action.kind,response,pc.image);
+            if(!ack()||pc_cancelled())goto done;
+            if(strcmp(action.kind,"screenshot")&&!pc_execute(&pc,&action,&e))goto done;
+            g_string_append_printf(feedback,"\nExecuted: %s\n",response);
+            if(feedback->len>64000)g_string_erase(feedback,0,feedback->len-64000);
+            if(!pc_capture(&pc,&e))goto done;
+            emit("screenshot",NULL,pc.image,NULL);
+            pc_action_clear(&action);
+        }
+        emit("error",NULL,"Desktop session stopped at its 24-action limit or emergency stop",NULL);goto done;
     }
     while(!stopped && rounds<3) {
         g_clear_pointer(&response,g_free); plan_clear(&plan);
@@ -147,7 +183,7 @@ int main(int argc,char **argv) {
 done:
     if(e) emit("error",NULL,e->message,NULL);
     else if(result && !response) emit("error",NULL,"Invalid request or interrupted input",NULL);
-    runner_clear(&runner); project_clear(&project); plan_clear(&plan); g_clear_error(&e);
+    runner_clear(&runner); project_clear(&project); plan_clear(&plan);pc_action_clear(&action);pc_clear(&pc); g_clear_error(&e);
     g_free(input); g_free(context); g_free(response); g_string_free(feedback,TRUE);
     g_object_unref(parser); curl_global_cleanup(); return result;
 }
