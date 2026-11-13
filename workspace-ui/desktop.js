@@ -20,6 +20,22 @@ $('#workspace-shell').append(work);
 async function post(route,data,signal){const r=await fetch('/api/'+route,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(data),signal});if(!r.ok)throw Error((await r.json()).error||r.statusText);return r;}
 connectImports(post,ui);
 const state=text=>$('#bench-state').textContent=text;
+// App selection is deliberately session-only: stale HWNDs are never restored.
+let desktopTarget='';
+const desktopImage=document.createElement('img');desktopImage.hidden=true;desktopImage.alt='Latest screenshot of the selected desktop app';desktopImage.style.cssText='max-width:100%;max-height:45vh;object-fit:contain';$('#bench-editor').before(desktopImage);
+const desktopButton=document.createElement('button');desktopButton.textContent='Control an app';desktopButton.title='Choose a Windows app for screenshot-based mouse and keyboard control';$('#chat-main header .header-actions').prepend(desktopButton);
+desktopButton.onclick=async()=>{
+  desktopButton.disabled=true;
+  try{
+    const {windows}=await(await post('desktop-windows',{})).json();const d=document.createElement('dialog');d.className='bench-approval';
+    const h=document.createElement('h2');h.textContent='Control a desktop app';const p=document.createElement('p');p.textContent='Use a vision-capable model. Each screenshot and input needs Yes/No approval. Screenshots go to your selected model. Keep private content closed. Stop anytime with Ctrl+Alt+Shift+F10.';
+    const select=document.createElement('select');select.setAttribute('aria-label','Desktop app');select.style.maxWidth='100%';
+    for(const w of windows){const o=document.createElement('option');o.value=w.id;o.textContent=w.title;select.append(o);}
+    const use=document.createElement('button');use.textContent='Use selected app';use.disabled=!windows.length;use.onclick=()=>{desktopTarget=select.value;desktopButton.textContent='App: '+select.selectedOptions[0].textContent.slice(0,28);$('#bench-execute').checked=true;d.close();};
+    const off=document.createElement('button');off.textContent='Use commands instead';off.onclick=()=>{desktopTarget='';desktopButton.textContent='Control an app';d.close();};
+    const close=document.createElement('button');close.textContent='Cancel';close.onclick=()=>d.close();d.onclose=()=>d.remove();d.append(h,p,select,use,off,close);document.body.append(d);d.showModal();
+  }catch(e){state(e.message);ui.notify('question',e.message);}finally{desktopButton.disabled=false;}
+};
 const projectDialog=document.createElement('dialog');projectDialog.id='bench-project-dialog';projectDialog.innerHTML='<h2>Open a project</h2><p>Choose the folder containing the code you want to work on.</p><div class="project-actions"></div>';document.body.append(projectDialog);projectDialog.querySelector('.project-actions').before(toolbar.querySelector('.root-label'));projectDialog.querySelector('.project-actions').append(browse);const projectDone=document.createElement('button');projectDone.textContent='Done';projectDone.className='primary';projectDone.onclick=()=>{updateSetup();projectDialog.close();};projectDialog.querySelector('.project-actions').append(projectDone);const computerButton=document.createElement('button');computerButton.textContent='Use computer mode';computerButton.onclick=()=>{$('#bench-root').value='';$('#bench-root').onchange();projectDialog.close();};projectDialog.querySelector('.project-actions').append(computerButton);
 const projectButton=document.createElement('button');projectButton.id='bench-project-button';projectButton.textContent='Open project';projectButton.onclick=()=>{projectDialog.showModal();$('#bench-root').focus();};$('#chat-main header .header-actions').before(projectButton);$('#chat-main header .header-actions').prepend($('#bench-toggle'));
 const models=connectModels(post,c=>{ui.setModel(c.model||'Choose model');ui.setConnectionLabel(c.configured&&c.model?(c.provider==='openai'?'Cloud model':'Local model'):'Choose a model');$('#bench-connect').textContent=c.provider==='openai'?'OpenAI · Models':'Local · Models';updateSetup();});
@@ -63,14 +79,14 @@ ui.setAdapter(async function*({chatId,messages,preferences,signal}){
    const id=crypto.randomUUID();let cancellation;
    const cancel=()=>cancellation||=post('cancel',{id}).catch(()=>{});controller.signal.addEventListener('abort',cancel,{once:true});
   paused=false;$('#bench-pause').textContent='Pause';$('#bench-stop').disabled=false;$('#bench-root').disabled=true;$('#bench-execute').disabled=true;
-  $('#bench-report').hidden=true;savedDiff='';pendingDiff='';browse.disabled=true;let terminal=false;
+  $('#bench-report').hidden=true;savedDiff='';pendingDiff='';browse.disabled=true;desktopButton.disabled=true;desktopImage.hidden=true;desktopImage.removeAttribute('src');let terminal=false;
   try{
     if(!models.getProfile())await models.ready;
     if(!models.getProfile()?.configured||!models.getProfile()?.model){models.open();throw Error('Choose a model to start your task.');}
     // Queue draining can change chats before the title observer updates the toolbar.
     const chat=ui.exportState().chats.find(c=>c.id===chatId),root=mapping[chat?.project||chatId]||'';
 
-    const r=await post('run',{id,chatId,root,model:models.getProfile().model,messages,instructions:desktopInstructions(preferences),execute:$('#bench-execute').checked,readOnly:preferences.permission==='read'},controller.signal);
+    const r=await post('run',{id,chatId,root,desktopWindow:desktopTarget,model:models.getProfile().model,messages,instructions:desktopInstructions(preferences),execute:$('#bench-execute').checked,readOnly:preferences.permission==='read'},controller.signal);
     const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='';
     while(true){const {value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});let end;
       while((end=buffer.indexOf('\n'))>=0){const event=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);check(controller.signal);
@@ -80,7 +96,7 @@ ui.setAdapter(async function*({chatId,messages,preferences,signal}){
           await post('decision',{id,sequence:event.sequence,token:event.approvalToken,allow},controller.signal);
           if(!allow){terminal=true;state('Stopped - permission denied; chat closed');ui.closeDeniedChat(chatId);return;}
         }
-        if(event.type==='status'){state(event.text);continue;}
+        if(event.type==='desktop'){state('Approved desktop action - switch to the selected app');await post('ack',{id,sequence:event.sequence},controller.signal);yield '\nApproved desktop action: '+event.name+'\n';continue;} if(event.type==='screenshot'){work.hidden=false;desktopImage.hidden=false;desktopImage.src=event.text;state('Observed selected app');continue;} if(event.type==='status'){state(event.text);continue;}
         if(event.type==='questions'){terminal=true;state('Waiting for your answers');ui.notify('question','Answer the clarification questions in chat');yield event.text+'\nReply with your answers to start.\n';}
         if(event.type==='plan'){yield '\n'+event.text+'\n';state('Working through the plan');}
         if(event.type==='step')yield '• '+event.text+'\n';
@@ -96,7 +112,7 @@ ui.setAdapter(async function*({chatId,messages,preferences,signal}){
     }
     if(!terminal)throw Error('Connection closed before a final result');
   }catch(error){const text=controller.signal.aborted?'Stopped. Previously saved files and command effects remain.':'Failed: '+error.message;state(text);$('#bench-report').hidden=false;$('#bench-report').dataset.result='error';$('#bench-report').textContent=text;yield '\n'+text+'\n';}
-  finally{signal.removeEventListener('abort',abort);if(!terminal||controller.signal.aborted)await cancel();active=null;skipPreview=false;browse.disabled=false;$('#bench-stop').disabled=true;$('#bench-root').disabled=false;$('#bench-execute').disabled=false;$('#bench-cursor').hidden=true;}
+  finally{signal.removeEventListener('abort',abort);if(!terminal||controller.signal.aborted)await cancel();active=null;skipPreview=false;browse.disabled=false;desktopButton.disabled=false;$('#bench-stop').disabled=true;$('#bench-root').disabled=false;$('#bench-execute').disabled=false;$('#bench-cursor').hidden=true;}
 });
 ui.setHostAdapter({capabilities:['diagnoseWorkspace'],async invoke(){try{await models.ready;models.open();}catch(e){state(e.message);}}});
 models.ready.then(c=>{updateSetup();state(c.configured&&c.model?'Ready · send a computer or project task':'Choose a model to get started');}).catch(e=>state(e.message));

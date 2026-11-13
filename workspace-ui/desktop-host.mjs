@@ -7,7 +7,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomBytes} from 'node:crypto';
-import {spawn} from 'node:child_process';
+import {spawn,execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {createInterface} from 'node:readline';
 import {createHistoryScanner} from './app-history.mjs';
 import {profile,discover} from './providers.mjs';
@@ -47,6 +48,12 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
       if(req.headers.authorization!==`Bearer ${token}`)return send(401,{error:'Launch this window from Launch-workspace.cmd'});
       if(req.method!=='POST'||!req.headers['content-type']?.startsWith('application/json'))return send(405,{error:'JSON POST required'});
       const data=await body(req);
+      if(route==='/api/desktop-windows'){
+        if(runs.size)return send(409,{error:'Stop the current task before choosing an app.'});
+        const env={...process.env};delete env.OPENAI_API_KEY;
+        const {stdout}=await promisify(execFile)(engine,['--desktop-windows'],{env,windowsHide:true,timeout:10000,maxBuffer:256*1024});
+        return send(200,{windows:JSON.parse(stdout)});
+      }
       if(route==='/api/import-apps')return send(200,await historyScanner.scan());
       if(route==='/api/import-app'){
         if(runs.size||importing)return send(409,{error:'Wait for the active task or import to finish.'});
@@ -97,21 +104,23 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
       if(runs.size)return send(409,{error:'Another run is active. Stop it before starting another.'});
       if(typeof data.id!=='string'||typeof data.root!=='string'||typeof data.model!=='string'||!data.model.trim()||!Array.isArray(data.messages))throw Error('Invalid run request');
       if(typeof data.chatId!=='string'||!data.chatId)throw Error('A chat identifier is required');
+      const desktopWindow=data.desktopWindow||'';
+      if(typeof desktopWindow!=='string'||(desktopWindow&&!/^[1-9][0-9]{0,19}:[1-9][0-9]{0,9}$/.test(desktopWindow)))throw Error('Select a valid desktop app.');
       if(closedChats.has(data.chatId))return send(403,{error:'This chat was closed after permission was denied. Start a new chat.'});
       // Reserve synchronously, before filesystem validation yields to another request.
       reservation={id:data.id,chatId:data.chatId,approval:null,child:null,res,waiting:null,sequence:0,timer:null,cancelled:false};
       runs.set(data.id,reservation);
       res.on('close',()=>{if(runs.get(data.id)===reservation)cancel(data.id);});
-      const computerMode=!data.root.trim();
+      const computerMode=!!desktopWindow||!data.root.trim();
       if(computerMode)await fs.mkdir(computerRoot,{recursive:true});
       const root=await fs.realpath(computerMode?computerRoot:data.root);if(!(await fs.stat(root)).isDirectory())throw Error('Project must be a directory');
       if(reservation.cancelled||res.destroyed){cancel(data.id);return;}
       const last=data.messages.filter(m=>m.role==='user').at(-1);if(!last||typeof last.text!=='string')throw Error('A task is required');
-      const pending=questions.get(data.chatId),answer=pending?.root===root;
+      const pending=questions.get(data.chatId),answer=pending?.root===root&&pending.desktopWindow===desktopWindow;
       const attachmentText=(last.files||[]).map(f=>`\nAttached reference ${f.name}:\n${f.content}`).join('');
       const task=answer?pending.task:last.text+attachmentText;
       if(data.instructions!==undefined&&(typeof data.instructions!=='string'||data.instructions.length>128000))throw Error('Invalid instructions');
-      const request={key:keyFor(config),endpoint:config.baseUrl+'/chat/completions',jsonMode:config.jsonMode,root,computerMode,model:data.model.trim(),task:task+(data.instructions?`\nUser preferences and instructions:\n${data.instructions}`:''),phase:answer?'execute':'questions',answers:answer?last.text+attachmentText:'',questions:answer?pending.text:''};
+      const request={key:keyFor(config),endpoint:config.baseUrl+'/chat/completions',jsonMode:config.jsonMode,root,computerMode,desktopWindow,model:data.model.trim(),task:task+(data.instructions?`\nUser preferences and instructions:\n${data.instructions}`:''),phase:answer?'execute':'questions',answers:answer?last.text+attachmentText:'',questions:answer?pending.text:''};
       if(answer)questions.delete(data.chatId);
       const env={...process.env};delete env.OPENAI_API_KEY;
       const child=spawn(engine,engineArgs,{cwd:path.dirname(engine),env,windowsHide:true,stdio:['pipe','pipe','pipe']});
@@ -129,13 +138,14 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
         if(run.cancelled)return;
         try {
           const event=JSON.parse(line);
-          if(event.type==='questions'){questions.set(data.chatId,{root,task,text:event.text});terminal=true;}
-          if(['error','success'].includes(event.type))terminal=true;
-          if(['preview','command'].includes(event.type)) {
+          if(event.type==='questions'){questions.set(data.chatId,{root,task,text:event.text,desktopWindow});terminal=true;}
+          if(['error','success','review'].includes(event.type))terminal=true;
+          if(['preview','command','desktop'].includes(event.type)) {
             // Read-only is enforced before either writes or arbitrary shell commands.
             if(!data.execute||data.readOnly){terminal=true;emit({type:'review',text:'Plan ready. No changes were applied. Enable edits and commands, then submit your task again to execute it.',name:event.name,before:event.before,proposal:event.type==='preview'?event.text:''});cancel(data.id);return;}
             event.sequence=++run.sequence;run.waiting=event.sequence;
             event.risk=assessAction(event);event.workingDirectory=root;
+            if(event.type==='desktop')event.destination=config.baseUrl+' · '+data.model;
             if(event.risk.requiresApproval){run.approval={token:randomBytes(24).toString('hex')};event.approvalToken=run.approval.token;}
           }
           if(!emit(event))child.stdout.pause();
