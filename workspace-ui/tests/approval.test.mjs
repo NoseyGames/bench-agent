@@ -24,7 +24,7 @@ async function consume(response,onEvent){let buffer='';const events=[];for await
 test('no-project commands cannot bypass approval; denial stops and closes chat',async t=>{
  const f=await setup(t);const r=await f.post('run',f.request);assert.equal(r.status,200);let commands=0;
  await consume(r,async e=>{if(e.type!=='command')return;commands++;
-   assert.equal(e.workingDirectory,f.computerRoot);assert.equal((await f.post('ack',{id:'test',sequence:e.sequence})).status,403);
+   assert.equal(e.workingDirectory,await fs.realpath(f.computerRoot));assert.equal((await f.post('ack',{id:'test',sequence:e.sequence})).status,403);
    assert.equal((await f.post('decision',{id:'test',sequence:e.sequence,token:'wrong',allow:true})).status,409);
    await assert.rejects(fs.access(path.join(f.computerRoot,'marker.txt')));
    assert.equal((await f.post('decision',{id:'test',sequence:e.sequence,token:e.approvalToken,allow:false})).status,200);
