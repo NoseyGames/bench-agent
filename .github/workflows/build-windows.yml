@@ -1,0 +1,68 @@
+name: Build Windows C app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gtk3
+            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-json-glib
+      - name: Compile C applications and run tests
+        shell: msys2 {0}
+        run: |
+          make -j2 all
+          make check
+          echo "BENCH_UCRT_PREFIX=$(cygpath -w /ucrt64)" >> "$GITHUB_ENV"
+      - name: Package native C desktop application
+        shell: pwsh
+        run: |
+          ./bundle-windows.ps1 -Prefix $env:BENCH_UCRT_PREFIX
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          $bundle = Get-ChildItem dist/bench-windows-*.zip | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          Copy-Item -LiteralPath $bundle.FullName -Destination artifacts/bench-native-windows-x64.zip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test current workspace UI and C bridge
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:BENCH_UCRT_PREFIX/bin;$env:PATH"
+          Set-Location workspace-ui
+          node --test tests/*.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node build.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package current workspace edition
+        shell: pwsh
+        run: |
+          ./bundle-workspace.ps1 -Prefix $env:BENCH_UCRT_PREFIX
+          Copy-Item bench-windows.zip artifacts/bench-workspace-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-windows-x64
+          path: artifacts/*.zip
+          if-no-files-found: error
+          retention-days: 14
