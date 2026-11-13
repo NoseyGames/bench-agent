@@ -149,7 +149,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
       if(process.platform==='win32') {
         const edge=path.join(process.env['ProgramFiles(x86)']||'C:\\Program Files (x86)','Microsoft/Edge/Application/msedge.exe');
         const browser=spawn(edge,[`--app=${url}`,'--window-size=1440,960'],{stdio:'ignore',detached:true,windowsHide:false});
-        browser.on('error',()=>console.error('Cannot open Edge. Install Edge or run without --open.'));browser.unref();
+        browser.on('error',()=>{console.error('Cannot open Edge. Install Edge or run without --open.');process.exitCode=1;host.close();});browser.unref();
       } else {const browser=spawn(process.platform==='darwin'?'open':'xdg-open',[url],{stdio:'ignore'});browser.on('error',e=>console.error(e.message));}
     } else console.log(url);
   });
