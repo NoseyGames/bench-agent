@@ -6,6 +6,7 @@ $dist=Join-Path $root ('dist/bench-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
 $bin=Join-Path $dist 'bin'
 New-Item -ItemType Directory -Path $bin -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'bench-engine.exe') -Destination $dist
+Copy-Item -LiteralPath (Join-Path $root 'Bench.exe') -Destination $dist
 $queue=[System.Collections.Generic.Queue[string]]::new()
 $seen=[System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $queue.Enqueue((Join-Path $dist 'bench-engine.exe'))
@@ -37,12 +38,12 @@ foreach($file in $frontend) {Copy-Item -LiteralPath (Join-Path $root "workspace-
 foreach($file in @('Launch-workspace.cmd','WORKSPACE-README.md','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $dist}
 @'
 @echo off
-call "%~dp0Launch-workspace.cmd"
+start "" "%~dp0Bench.exe"
 '@ | Set-Content -LiteralPath (Join-Path $dist 'Launch.cmd') -Encoding ascii
 # Source package contains the supplied frontend and both C entry points.
 $sourceDir=Join-Path $dist 'source'
 New-Item -ItemType Directory -Path (Join-Path $sourceDir 'workspace-ui/tests') -Force | Out-Null
-foreach($file in @('main.c','engine.c','agent.c','agent.h','project.c','project.h','runner.c','runner.h','cursor.c','cursor.h','test_agent.c','Makefile','README.md','WORKSPACE-README.md','VALIDATION.md','Launch-workspace.cmd','bundle-workspace.ps1','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $sourceDir}
+foreach($file in @('main.c','desktop.c','engine.c','agent.c','agent.h','project.c','project.h','runner.c','runner.h','cursor.c','cursor.h','test_agent.c','Makefile','README.md','WORKSPACE-README.md','VALIDATION.md','Launch-workspace.cmd','bundle-workspace.ps1','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $sourceDir}
 Copy-Item -LiteralPath (Join-Path $root 'assets') -Destination $sourceDir -Recurse
 Copy-Item -LiteralPath (Join-Path $root 'licenses') -Destination $sourceDir -Recurse
 foreach($file in ($frontend+@('build.mjs','package.json','README.md'))) {Copy-Item -LiteralPath (Join-Path $root "workspace-ui/$file") -Destination (Join-Path $sourceDir 'workspace-ui')}

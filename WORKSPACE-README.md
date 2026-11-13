@@ -9,9 +9,9 @@ window. This is not an Electron app and the frontend is not written in C.
 
 ## Run the Windows package
 
-Extract **bench-windows.zip**, then open **Launch.cmd** in the extracted
+Extract **bench-windows.zip**, then open **Bench.exe** in the extracted
 folder. Node and C runtime DLLs are included. Microsoft Edge must be installed.
-The host console stays open while the app runs; use **Quit** to stop the host.
+The C desktop entry point hides the host console; use **Quit** to stop the host. Closing only the Edge window leaves the host running. `Launch-workspace.cmd` remains available for diagnostics.
 The default port is 47291; set `PORT` to another port if it is already occupied.
 Chat history belongs to that browser profile and port.
 

@@ -7,10 +7,14 @@ GUI_PKGS = gtk+-3.0 $(CORE_PKGS)
 EXE =
 ifeq ($(OS),Windows_NT)
 EXE = .exe
+DESKTOP = Bench.exe
 endif
 
 .PHONY: all check smoke smoke-repair smoke-readable clean
-all: visual-agent$(EXE) bench-engine$(EXE)
+all: visual-agent$(EXE) bench-engine$(EXE) $(DESKTOP)
+
+Bench.exe: desktop.c
+	$(CC) $(CFLAGS) -municode -mwindows desktop.c -o $@ -luser32
 
 SOURCES = agent.c project.c runner.c
 HEADERS = agent.h project.h runner.h
