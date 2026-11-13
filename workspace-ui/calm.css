@@ -25,3 +25,4 @@
 #bench-import-dialog button:disabled {opacity:.5;cursor:wait}
 .import-footer {justify-content:flex-start;margin-top:20px}
 .import-status {min-height:50px;font-size:13px}
+.bench-approval{width:min(760px,90vw);max-height:85vh;overflow:auto;background:#262822;color:#eee;padding:28px;border:1px solid #8c7557;border-radius:16px}.bench-approval::backdrop{background:#000b}.bench-approval pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:36vh;overflow:auto;background:#181a16;padding:16px}.bench-approval p{line-height:1.5}.bench-approval button{padding:12px;margin-right:12px}

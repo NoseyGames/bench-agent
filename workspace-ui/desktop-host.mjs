@@ -1,6 +1,8 @@
 // Loopback-only desktop transport. C owns API calls, file validation and commands.
 // A random per-launch bearer token and strict Host/Origin checks protect writes.
 import http from 'node:http';
+import os from 'node:os';
+import {assessAction} from './action-policy.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -11,10 +13,10 @@ import {createHistoryScanner} from './app-history.mjs';
 import {profile,discover} from './providers.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
-const assets=new Set(['index.html','app.js','state.js','style.css','workspace.css','settings.js','preferences.js','appearance.js','desktop.js','desktop.css','ai.cur','connection.js','providers.mjs','brand.css','brand.svg','chat-import.js','first-run.js','calm.css','app-import.js']);
+const assets=new Set(['index.html','app.js','state.js','style.css','workspace.css','settings.js','preferences.js','appearance.js','desktop.js','desktop.css','ai.cur','connection.js','providers.mjs','brand.css','brand.svg','chat-import.js','first-run.js','calm.css','app-import.js','approval.js']);
 const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.cur':'image/x-icon','.mjs':'text/javascript','.svg':'image/svg+xml'};
-export function createHost({engine=path.join(here,'..',process.platform==='win32'?'bench-engine.exe':'bench-engine'),engineArgs=[],historyScanner=createHistoryScanner(),token=randomBytes(32).toString('hex')}={}) {
-  const runs=new Map(),questions=new Map(); let config=profile(),importing=false;
+export function createHost({engine=path.join(here,'..',process.platform==='win32'?'bench-engine.exe':'bench-engine'),engineArgs=[],historyScanner=createHistoryScanner(),computerRoot=path.join(process.env.LOCALAPPDATA||os.homedir(),'Bench','computer-workspace'),token=randomBytes(32).toString('hex')}={}) {
+  const runs=new Map(),questions=new Map(),closedChats=new Set(); let config=profile(),importing=false;
   const credentials=new Map([['openai|https://api.openai.com/v1',process.env.OPENAI_API_KEY||'']]);
   const keyFor=c=>credentials.get(c.provider+'|'+c.baseUrl)||'';
   async function body(req) {
@@ -78,27 +80,38 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
         res.on('close',()=>{clearTimeout(timer);picker.kill();});return;
       }
       if(route==='/api/cancel') {await cancel(data.id);return send(200,{ok:true});}
+      if(route==='/api/decision') {
+        const run=runs.get(data.id);
+        if(!run?.approval||run.cancelled||run.waiting!==data.sequence||run.approval.token!==data.token||typeof data.allow!=='boolean')return send(409,{error:'This permission request is no longer pending.'});
+        if(!data.allow){closedChats.add(run.chatId);questions.delete(run.chatId);await cancel(data.id);return send(200,{closed:true});}
+        run.approval=null;return send(200,{approved:true});
+      }
       if(route==='/api/ack') {
         const run=runs.get(data.id);
         if(!run?.child||run.cancelled||run.waiting===null||run.waiting!==data.sequence)return send(409,{error:'This action is no longer pending'});
+        if(run.approval)return send(403,{error:'Explicit permission is required before this action.'});
         run.waiting=null;run.child.stdin.write('ack\n');return send(200,{ok:true});
       }
       if(route!=='/api/run')return send(404,{error:'Not found'});
       if(config.provider==='openai'&&!keyFor(config))return send(400,{error:'Open Models and connect OpenAI, or choose a local model.'});
       if(runs.size)return send(409,{error:'Another run is active. Stop it before starting another.'});
       if(typeof data.id!=='string'||typeof data.root!=='string'||typeof data.model!=='string'||!data.model.trim()||!Array.isArray(data.messages))throw Error('Invalid run request');
+      if(typeof data.chatId!=='string'||!data.chatId)throw Error('A chat identifier is required');
+      if(closedChats.has(data.chatId))return send(403,{error:'This chat was closed after permission was denied. Start a new chat.'});
       // Reserve synchronously, before filesystem validation yields to another request.
-      reservation={id:data.id,child:null,res,waiting:null,sequence:0,timer:null,cancelled:false};
+      reservation={id:data.id,chatId:data.chatId,approval:null,child:null,res,waiting:null,sequence:0,timer:null,cancelled:false};
       runs.set(data.id,reservation);
       res.on('close',()=>{if(runs.get(data.id)===reservation)cancel(data.id);});
-      const root=await fs.realpath(data.root);if(!(await fs.stat(root)).isDirectory())throw Error('Project must be a directory');
+      const computerMode=!data.root.trim();
+      if(computerMode)await fs.mkdir(computerRoot,{recursive:true});
+      const root=await fs.realpath(computerMode?computerRoot:data.root);if(!(await fs.stat(root)).isDirectory())throw Error('Project must be a directory');
       if(reservation.cancelled||res.destroyed){cancel(data.id);return;}
       const last=data.messages.filter(m=>m.role==='user').at(-1);if(!last||typeof last.text!=='string')throw Error('A task is required');
       const pending=questions.get(data.chatId),answer=pending?.root===root;
       const attachmentText=(last.files||[]).map(f=>`\nAttached reference ${f.name}:\n${f.content}`).join('');
       const task=answer?pending.task:last.text+attachmentText;
       if(data.instructions!==undefined&&(typeof data.instructions!=='string'||data.instructions.length>128000))throw Error('Invalid instructions');
-      const request={key:keyFor(config),endpoint:config.baseUrl+'/chat/completions',jsonMode:config.jsonMode,root,model:data.model.trim(),task:task+(data.instructions?`\nUser preferences and instructions:\n${data.instructions}`:''),phase:answer?'execute':'questions',answers:answer?last.text+attachmentText:'',questions:answer?pending.text:''};
+      const request={key:keyFor(config),endpoint:config.baseUrl+'/chat/completions',jsonMode:config.jsonMode,root,computerMode,model:data.model.trim(),task:task+(data.instructions?`\nUser preferences and instructions:\n${data.instructions}`:''),phase:answer?'execute':'questions',answers:answer?last.text+attachmentText:'',questions:answer?pending.text:''};
       if(answer)questions.delete(data.chatId);
       const env={...process.env};delete env.OPENAI_API_KEY;
       const child=spawn(engine,engineArgs,{cwd:path.dirname(engine),env,windowsHide:true,stdio:['pipe','pipe','pipe']});
@@ -122,6 +135,8 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
             // Read-only is enforced before either writes or arbitrary shell commands.
             if(!data.execute||data.readOnly){terminal=true;emit({type:'review',text:'Plan ready. No changes were applied. Enable edits and commands, then submit your task again to execute it.',name:event.name,before:event.before,proposal:event.type==='preview'?event.text:''});cancel(data.id);return;}
             event.sequence=++run.sequence;run.waiting=event.sequence;
+            event.risk=assessAction(event);event.workingDirectory=root;
+            if(event.risk.requiresApproval){run.approval={token:randomBytes(24).toString('hex')};event.approvalToken=run.approval.token;}
           }
           if(!emit(event))child.stdout.pause();
         } catch {fail('Invalid event from C engine');cancel(data.id);}
