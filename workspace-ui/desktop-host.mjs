@@ -120,7 +120,7 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
       const attachmentText=(last.files||[]).map(f=>`\nAttached reference ${f.name}:\n${f.content}`).join('');
       const task=answer?pending.task:last.text+attachmentText;
       if(data.instructions!==undefined&&(typeof data.instructions!=='string'||data.instructions.length>128000))throw Error('Invalid instructions');
-      const request={key:keyFor(config),endpoint:config.baseUrl+'/chat/completions',jsonMode:config.jsonMode,root,computerMode,desktopWindow,model:data.model.trim(),task:task+(data.instructions?`\nUser preferences and instructions:\n${data.instructions}`:''),phase:answer?'execute':'questions',answers:answer?last.text+attachmentText:'',questions:answer?pending.text:''};
+      const request={key:keyFor(config),endpoint:config.baseUrl+'/chat/completions',jsonMode:config.jsonMode,desktopProtocol:config.provider==='openai'?'responses':'chat',root,computerMode,desktopWindow,model:data.model.trim(),task:task+(data.instructions?`\nUser preferences and instructions:\n${data.instructions}`:''),phase:answer?'execute':'questions',answers:answer?last.text+attachmentText:'',questions:answer?pending.text:''};
       if(answer)questions.delete(data.chatId);
       const env={...process.env};delete env.OPENAI_API_KEY;
       const child=spawn(engine,engineArgs,{cwd:path.dirname(engine),env,windowsHide:true,stdio:['pipe','pipe','pipe']});

@@ -7,6 +7,14 @@
 #bench-work[hidden]{display:none}#bench-work .work-head{padding:13px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
 #bench-work .work-head strong{flex:1}#bench-work button{font-size:12px}
 #bench-state{padding:10px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);overflow-wrap:anywhere}
+#bench-desktop-progress{padding:14px 16px;border-bottom:1px solid var(--border);font-size:12px;line-height:1.5;overflow:auto;max-height:32vh;flex-shrink:0}
+#bench-desktop-progress[hidden]{display:none}#bench-desktop-progress strong{font-size:13px}#bench-desktop-progress p{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}#bench-desktop-progress p:empty{display:none}
+#bench-desktop-progress .desktop-verification{color:var(--muted);border-top:1px solid var(--border);padding-top:8px}#bench-desktop-progress .desktop-verification[data-result=failed]{color:#dd9a8e}
+#bench-desktop-image{display:block;width:100%;min-height:0;max-height:45vh;object-fit:contain;flex:1;background:var(--surface)}#bench-desktop-image[hidden]{display:none}
+#bench-work[data-mode=desktop] #bench-file,#bench-work[data-mode=desktop] #bench-editor,#bench-work[data-mode=desktop] #bench-terminal{display:none}
+.bench-approval-image{display:block;max-width:100%;max-height:32vh;object-fit:contain;margin:14px auto}
+.bench-action-summary{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px;font-size:13px;line-height:1.5}.bench-action-summary dt{color:var(--muted)}.bench-action-summary dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.bench-approval details{margin-top:14px}.bench-approval summary{cursor:pointer;font-size:12px;color:var(--muted)}
 #bench-file{font-family:monospace;font-size:12px;padding:10px 16px;color:var(--muted)}
 #bench-editor{flex:1;min-height:150px;overflow:auto;position:relative;padding:12px 22px;background:var(--surface);scrollbar-width:thin}
 #bench-code{margin:0;font:13px/1.7 Consolas,monospace;tab-size:4;white-space:pre-wrap;overflow-wrap:anywhere;min-height:100%}
