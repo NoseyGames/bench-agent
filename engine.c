@@ -80,8 +80,13 @@ int main(int argc,char **argv) {
     if(json_object_has_member(o,"jsonMode")) json_mode=json_object_get_boolean_member(o,"jsonMode");
     gboolean computer=json_object_has_member(o,"computerMode") && json_object_get_boolean_member(o,"computerMode");
     const char *key=get(o,"key"),*model=get(o,"model"),*task=get(o,"task"),*answers=get(o,"answers"),*questions=get(o,"questions");
-    if(!project_open(&project,get(o,"root"),&e) || !(context=project_context(&project,&e))) goto done;
-    emit("status","project","Project inspected",NULL);
+    if(*get(o,"desktopWindow")){
+        computer=TRUE;
+        context=g_strdup("Desktop control: the user selected one Windows app. Screenshots, mouse and keyboard actions require individual approval. Ask only about the app task and expected result. No project files are needed.");
+    }else{
+        if(!project_open(&project,get(o,"root"),&e) || !(context=project_context(&project,&e))) goto done;
+        emit("status","project","Project inspected",NULL);
+    }
     if(!strcmp(get(o,"phase"),"questions") && argc==1) {
         response=complete(key,make_request_ex(model,task,NULL,NULL,context,NULL,computer),&e);
         Questions q={0}; if(!response || !parse_questions(response,&q,&e)) goto done;
