@@ -43,8 +43,7 @@ try{
         const frame=JSON.parse(observation).frame;
         if(!Number.isInteger(frame)||frame<1)throw Error('Observation frame missing.');
         if(content.some(part=>part.type==='image_url'))throw Error('Unexpected default screenshot.');
-        reply={frame,verification:frame===1?'first':'uncertain',evidence:'This is a deterministic UI preview, not a real model assessment.',outcome:frame===1?'ongoing':'blocked',
-          actions:frame===1?[{action:'click',reason:'Focus the empty edit field in the disposable fixture. Choose No to verify denial closes this chat.',text:'',x:80,y:100,delta:0,expected:'The edit field receives focus.'}]:[]};
+        reply={actions:frame===1?[{name:'click',args:{x:80,y:100}}]:[]};
       }else reply={questions:['Use the app named Bench desktop control test - disposable?','Inspect the click permission and choose No to close this chat?']};
       res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(reply)}}]}));
     }catch(error){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:error.message}));}
