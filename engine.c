@@ -54,6 +54,30 @@ static const char *get(JsonObject *o,const char *key) {
     JsonNode *n=json_object_get_member(o,key);
     return n && JSON_NODE_HOLDS_VALUE(n) && json_node_get_value_type(n)==G_TYPE_STRING?json_node_get_string(n):"";
 }
+typedef enum { SESSION_PROJECT, SESSION_DESKTOP, SESSION_COMMANDS } SessionMode;
+/* Session configuration is host-owned, never inferred from model JSON. Legacy
+ * selected-window requests remain compatible; ambiguous computer requests fail
+ * closed instead of accidentally invoking the coding-plan validator. */
+static gboolean session_mode(JsonObject *o,SessionMode *mode,GError **e) {
+    const char *value=get(o,"sessionMode"),*window=get(o,"desktopWindow");
+    gboolean computer=json_object_has_member(o,"computerMode")&&json_object_get_boolean_member(o,"computerMode");
+    if(json_object_has_member(o,"sessionMode")) {
+        if(!strcmp(value,"project"))*mode=SESSION_PROJECT;
+        else if(!strcmp(value,"desktop"))*mode=SESSION_DESKTOP;
+        else if(!strcmp(value,"commands"))*mode=SESSION_COMMANDS;
+        else goto invalid;
+    } else if(*window) *mode=SESSION_DESKTOP;
+    else if(computer) {
+        g_set_error_literal(e,G_IO_ERROR,G_IO_ERROR_INVALID_ARGUMENT,"Computer mode needs an explicit sessionMode: select an app for desktop control, or choose commands mode.");return FALSE;
+    } else *mode=SESSION_PROJECT;
+    if((*mode!=SESSION_DESKTOP&&*window)||(*mode==SESSION_PROJECT&&computer))goto invalid;
+    if(*mode==SESSION_DESKTOP&&!*window){
+        g_set_error_literal(e,G_IO_ERROR,G_IO_ERROR_INVALID_ARGUMENT,"Desktop mode requires a selected app. Use Control an app before starting.");return FALSE;
+    }
+    return TRUE;
+invalid:
+    g_set_error_literal(e,G_IO_ERROR,G_IO_ERROR_INVALID_ARGUMENT,"Invalid or conflicting sessionMode (project, desktop or commands).");return FALSE;
+}
 static char *exchange(const char *key,char *request,GError **e) {
     Api a={0}; char *result=NULL;
     if(!request)return NULL;
@@ -99,10 +123,11 @@ int main(int argc,char **argv) {
     JsonObject *o=json_node_get_object(json_parser_get_root(parser));
     if(*get(o,"endpoint")) endpoint=get(o,"endpoint");
     if(json_object_has_member(o,"jsonMode")) json_mode=json_object_get_boolean_member(o,"jsonMode");
-    gboolean computer=json_object_has_member(o,"computerMode") && json_object_get_boolean_member(o,"computerMode");
+    SessionMode mode;
+    if(!session_mode(o,&mode,&e))goto done;
+    gboolean computer=mode!=SESSION_PROJECT;
     const char *key=get(o,"key"),*model=get(o,"model"),*task=get(o,"task"),*answers=get(o,"answers"),*questions=get(o,"questions");
-    if(*get(o,"desktopWindow")){
-        computer=TRUE;
+    if(mode==SESSION_DESKTOP){
         context=g_strdup("Desktop control: the user selected one Windows app. Compact accessibility text is the primary observation. Optional screenshots, mouse and keyboard actions require individual approval. Ask only about the app task and expected result. No project files are needed.");
     }else{
         if(!project_open(&project,get(o,"root"),&e))goto done;
@@ -117,7 +142,7 @@ int main(int argc,char **argv) {
         for(guint i=0;i<q.count;i++) g_string_append_printf(text,"%u. %s\n",i+1,q.text[i]);
         emit("questions",NULL,text->str,NULL); g_string_free(text,TRUE); questions_clear(&q); result=0; goto done;
     }
-    if(*get(o,"desktopWindow")) {
+    if(mode==SESSION_DESKTOP) {
         gboolean responses=!strcmp(get(o,"desktopProtocol"),"responses")||!strcmp(endpoint,"https://api.openai.com/v1/chat/completions");
         if(responses){
             const char *suffix="/chat/completions";
@@ -142,12 +167,11 @@ int main(int argc,char **argv) {
             response=pc_agent_accept_plan(&desktop,body,&actions,&e);g_free(body);
             if(!response)goto done;
             char *frame=g_strdup_printf("%u",desktop.frame);
-            emit("observation",frame,desktop.observation,NULL);g_free(frame);
-            emit("verification",desktop.verification,desktop.evidence,NULL);
+            emit("observation",frame,pc.structured,NULL);g_free(frame);
             if(!actions.count){
-                gboolean completed=!strcmp(desktop.outcome,"completed");
-                char *summary=g_strdup_printf("Model assessment: %s\nObserved evidence: %s",completed?"completed":"blocked",desktop.evidence);
-                emit("review",completed?"desktop-completed":"desktop-blocked",summary,NULL);g_free(summary);result=completed?0:1;goto done;
+                /* Empty actions end the sequence, not a claim that the task
+                 * succeeded. Keep the existing review event/UI contract. */
+                emit("review","desktop-completed","Desktop action sequence ended. Review the observed result; task success is not independently verified.",NULL);result=0;goto done;
             }
             GString *driver=g_string_new(NULL);int click_x=-1,click_y=-1;image=FALSE;
             g_clear_pointer(&click_target,g_free);
@@ -164,6 +188,10 @@ int main(int argc,char **argv) {
                 char *single=pc_plan_action_json(&actions,i);
                 emit("desktop",action->kind,single,pc.image);g_free(single);
                 if(!ack()||pc_cancelled()){g_string_free(driver,TRUE);goto done;}
+                if(!strcmp(action->kind,"observe")){
+                    if(!desktop_observe(&pc,FALSE,&image,&e)){g_string_free(driver,TRUE);goto done;}
+                    g_string_append(driver,"Structured observation refreshed after individual approval; no input sent.\n");continue;
+                }
                 if(!pc_revalidate(&pc,&e)){
                     if(!g_error_matches(e,G_IO_ERROR,G_IO_ERROR_WOULD_BLOCK)){g_string_free(driver,TRUE);goto done;}
                     g_clear_error(&e);emit("replan",NULL,"App state changed or the observation expired. This action and the remaining batch were discarded; approval is spent.",NULL);

@@ -22,6 +22,9 @@ typedef struct {
 typedef struct { guint count; char *text[3]; } Questions;
 
 gboolean parse_questions(const char *json, Questions *out, GError **error);
+/* Reject nonstandard JSON, multiple roots, duplicate object keys and excessive
+ * nesting before a model plan is decoded. No newer JSON-GLib API is required. */
+gboolean agent_json_strict(const char *json, GError **error);
 gboolean parse_plan(const char *json, Plan *out, GError **error);
 void questions_clear(Questions *q);
 void plan_clear(Plan *p);

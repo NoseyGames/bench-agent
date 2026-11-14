@@ -35,7 +35,7 @@ Copy-Item -LiteralPath (Join-Path $Prefix 'etc/ssl/certs/ca-bundle.crt') -Destin
 $frontend=@('index.html','app.js','state.js','style.css','workspace.css','settings.js','preferences.js','appearance.js','desktop.js','desktop.css','desktop-host.mjs','app-history.mjs','action-policy.mjs','ai.cur','connection.js','providers.mjs','brand.css','brand.svg','chat-import.js','first-run.js','calm.css','app-import.js','approval.js')
 New-Item -ItemType Directory -Path (Join-Path $dist 'workspace-ui') | Out-Null
 foreach($file in $frontend) {Copy-Item -LiteralPath (Join-Path $root "workspace-ui/$file") -Destination (Join-Path $dist 'workspace-ui')}
-foreach($file in @('Launch-workspace.cmd','WORKSPACE-README.md','HYBRID-OBSERVATION.md','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $dist}
+foreach($file in @('Launch-workspace.cmd','WORKSPACE-README.md','HYBRID-OBSERVATION.md','UI-RESEARCH.md','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $dist}
 @'
 @echo off
 start "" "%~dp0Bench.exe"
@@ -43,7 +43,7 @@ start "" "%~dp0Bench.exe"
 # Source package contains the supplied frontend and both C entry points.
 $sourceDir=Join-Path $dist 'source'
 New-Item -ItemType Directory -Path (Join-Path $sourceDir 'workspace-ui/tests') -Force | Out-Null
-foreach($file in @('main.c','desktop.c','engine.c','pc_control.c','pc_control.h','pc_observe.c','pc_observe.h','pc_agent.c','pc_agent.h','agent.c','agent.h','project.c','project.h','runner.c','runner.h','cursor.c','cursor.h','test_agent.c','test_pc.c','test_pc_agent.c','test_project_state.c','Makefile','README.md','WORKSPACE-README.md','HYBRID-OBSERVATION.md','VALIDATION.md','GITHUB-BUILD.md','Launch-workspace.cmd','bundle-workspace.ps1','bundle-windows.ps1','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $sourceDir}
+foreach($file in @('main.c','desktop.c','engine.c','pc_control.c','pc_control.h','pc_observe.c','pc_observe.h','pc_agent.c','pc_agent.h','agent.c','agent.h','project.c','project.h','runner.c','runner.h','cursor.c','cursor.h','test_agent.c','test_pc.c','test_pc_agent.c','test_project_state.c','Makefile','README.md','WORKSPACE-README.md','HYBRID-OBSERVATION.md','UI-RESEARCH.md','VALIDATION.md','GITHUB-BUILD.md','Launch-workspace.cmd','bundle-workspace.ps1','bundle-windows.ps1','LICENSE')) {Copy-Item -LiteralPath (Join-Path $root $file) -Destination $sourceDir}
 Copy-Item -LiteralPath (Join-Path $root '.github') -Destination $sourceDir -Recurse
 Copy-Item -LiteralPath (Join-Path $root 'assets') -Destination $sourceDir -Recurse
 Copy-Item -LiteralPath (Join-Path $root 'licenses') -Destination $sourceDir -Recurse

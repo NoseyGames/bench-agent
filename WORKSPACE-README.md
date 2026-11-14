@@ -234,7 +234,7 @@ Imports are bounded to 24 MB per response and 64 MB per transcript. Browser stor
 
 ## Computer mode and action permissions
 
-No project is required. **Open project → Use computer mode** clears the folder selection. Bench uses `%LOCALAPPDATA%/Bench/computer-workspace` as a small working directory. It does not scan your whole home directory for context. Approved commands can target other locations and automate programs through shell/PowerShell, subject to your normal account permissions. There is no automatic administrator elevation. Observed desktop input is available through **Control an app**, described below.
+No project is required. Open the scope button in the header and choose **Commands without a project** to clear the folder selection. The header identifies this as **Commands · no project**. Bench uses `%LOCALAPPDATA%/Bench/computer-workspace` as a small working directory. It does not scan your whole home directory for context. Approved commands can target other locations and automate programs through shell/PowerShell, subject to your normal account permissions. There is no automatic administrator elevation. Observed desktop input is a separate mode, available through **Control an app**, described below.
 
 The host assesses each proposed command and file write before the C engine proceeds. All shell commands require permission, including seemingly harmless or disguised commands: arbitrary scripts cannot be reliably classified as safe. Recognized destructive command names receive a critical label; other commands receive a high label. File writes also require approval. The label explains risk; it is not a guarantee about the command's effects.
 
@@ -273,4 +273,26 @@ only a bounded current working state. New observations default to text.
 See [HYBRID-OBSERVATION.md](HYBRID-OBSERVATION.md) for exact observation/action JSON,
 source entry points, message packaging, bounds and remaining limitations.
 See [VALIDATION.md](VALIDATION.md) for executed checks. Sessions stop after 24 model
-turns or 30 minutes. Input delivery is distinct from model-assessed completion.
+turns or 30 minutes. An empty desktop action list ends for human review; it does
+not attest that the task succeeded.
+
+## Plan modes and workspace presentation
+
+The C engine chooses its validator from the host-owned `sessionMode`, before any
+model call. Project mode and explicit no-project commands use the strict coding
+plan. Desktop uses only `{"actions":[{"name":"observe","args":{}}]}` and the
+other action variants in HYBRID-OBSERVATION.md. Neither validator accepts a mixed
+plan. Malformed JSON, duplicate keys and truncated replies are rejected in full.
+
+The workspace shows native app title/process, focus, nearby controls and bounds
+as text. Exact observation JSON is expandable; images appear only after their
+own approval and disappear when a newer observation has no screenshot. Permission
+cards distinguish read access, images, real input, shell commands and file writes,
+while retaining severity and exact Yes/No behavior. No and Escape close the chat.
+Desktop input cannot change its app/project scope while a run is active.
+
+The layout uses the existing appearance settings, with a two-row task header when
+the conversation pane is narrow. Setup still appears once, has Skip, and can be
+replayed from Settings; its motion is finite and respects reduced-motion settings.
+Chat import discovery and the local-provider path remain unchanged. See
+[UI-RESEARCH.md](UI-RESEARCH.md) for the seven design principles and before/after notes.

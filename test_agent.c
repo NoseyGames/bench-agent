@@ -30,6 +30,89 @@ static void plans(void) {
         "{\"summary\":\"x\",\"steps\":[\"x\"],\"files\":[{\"name\":\"a\",\"content\":null}]}",NULL};
     for(int i=0;bad[i];i++) { g_assert_false(parse_plan(bad[i],&p,&e)); g_assert_nonnull(e); g_clear_error(&e); plan_clear(&p); }
 }
+static void coding_schema_isolation(void) {
+    GError *e=NULL; Plan p={0};
+    const char *bad[]={
+        "{\"actions\":[{\"name\":\"observe\",\"args\":{}}]}",
+        "{\"summary\":\"mixed\",\"steps\":[\"read\"],\"files\":[],\"commands\":[],\"read_files\":[\"main.c\"],\"actions\":[{\"name\":\"click\",\"args\":{\"x\":1,\"y\":2}}]}",
+        "{\"summary\":\"extra file field\",\"steps\":[\"write\"],\"files\":[{\"name\":\"main.c\",\"content\":\"x\",\"actions\":[]}],\"commands\":[],\"read_files\":[]}",
+        "{\"summary\":\"extra command field\",\"steps\":[\"check\"],\"files\":[],\"commands\":[{\"kind\":\"inspect\",\"command\":\"echo check\",\"timeout_seconds\":10,\"args\":{}}],\"read_files\":[]}",
+        "{\"summary\":\"read and write\",\"steps\":[\"mixed\"],\"files\":[{\"name\":\"main.c\",\"content\":\"x\"}],\"commands\":[],\"read_files\":[\"main.c\"]}",
+        "{\"summary\":\"read and execute\",\"steps\":[\"mixed\"],\"files\":[],\"commands\":[{\"kind\":\"inspect\",\"command\":\"echo check\",\"timeout_seconds\":10}],\"read_files\":[\"main.c\"]}",
+        NULL
+    };
+    for(guint i=0;bad[i];i++) {
+        g_assert_false(parse_plan(bad[i],&p,&e)); g_assert_nonnull(e);
+        g_assert_cmpuint(p.count,==,0); g_assert_null(p.summary); g_assert_null(p.commands);
+        g_clear_error(&e);
+    }
+    /* The same validator continues to accept genuine coding plans. */
+    g_assert_true(parse_plan(valid_plan,&p,&e)); g_assert_cmpuint(p.count,==,1); plan_clear(&p);
+}
+static void coding_plan_atomicity(void) {
+    GError *e=NULL; Plan p={0};
+    g_assert_true(parse_plan(valid_plan,&p,&e));
+    char *original_content=p.files[0].content;
+    GPtrArray *original_steps=p.steps;
+    /* An invalid tail must not expose even the valid first file or command. */
+    const char *bad[]={
+        "{\"summary\":\"partial files\",\"steps\":[\"replace\"],\"files\":[{\"name\":\"first.c\",\"content\":\"first\"},{\"name\":\"second.c\",\"content\":null}],\"commands\":[],\"read_files\":[]}",
+        "{\"summary\":\"partial commands\",\"steps\":[\"run\"],\"files\":[],\"commands\":[{\"kind\":\"inspect\",\"command\":\"echo first\",\"timeout_seconds\":10},{\"kind\":\"click\",\"command\":\"echo second\",\"timeout_seconds\":10}],\"read_files\":[]}",
+        "{\"summary\":\"truncated\",\"steps\":[\"replace\"],\"files\":[{\"name\":\"first.c\",\"content\":\"first\"}],\"commands\":[],\"read_files\":[",
+        NULL
+    };
+    for(guint i=0;bad[i];i++) {
+        g_assert_false(parse_plan(bad[i],&p,&e)); g_assert_nonnull(e); g_clear_error(&e);
+        g_assert_true(p.files[0].content==original_content); g_assert_true(p.steps==original_steps);
+        g_assert_cmpstr(p.summary,==,"Ready"); g_assert_cmpstr(p.files[0].name,==,"main.c");
+        g_assert_cmpuint(p.count,==,1); g_assert_cmpuint(p.commands->len,==,0);
+    }
+    plan_clear(&p);
+}
+static void strict_json(void) {
+    GError *e=NULL;
+    const char *bad[]={
+        "{\"actions\":[]/* comment */}", "{\"actions\":[],}", "{'actions':[]}",
+        "{\"actions\":[],\"actions\":[]}", "{\"a\":1,\"\\u0061\":2}",
+        "{\"actions\":[]}{}", "{\"actions\":[]} trailing", "{\"x\":\"a\\u0000b\"}",
+        "{\"x\":01}", "{\"x\":1.}", "{\"x\":1e}", "{\"x\":+1}",
+        "{\"x\":\"\\u12\"}", "{\"x\":\"\\q\"}", "[true,]", "{\"x\":tru}",
+        NULL
+    };
+    for(guint i=0;bad[i];i++) {
+        g_test_message("Strict JSON fixture %u",i);
+        g_assert_false(agent_json_strict(bad[i],&e));g_assert_nonnull(e);g_clear_error(&e);
+    }
+    const char *good[]={
+        "{\"left\":{\"same\":1},\"right\":{\"same\":2}}",
+        "{\"a\":[{\"b\":1},{}],\"s\":\"/* ordinary text */ \\\" \\u96ea\",\"n\":-10.5e+2,\"b\":true,\"z\":null}",
+        "{\"literal\":\"\\\\u0000\"}", valid_plan, NULL
+    };
+    for(guint i=0;good[i];i++){g_assert_true(agent_json_strict(good[i],&e));g_assert_no_error(e);}
+    GString *deep=g_string_new(NULL);
+    for(guint i=0;i<65;i++)g_string_append_c(deep,'[');
+    for(guint i=0;i<65;i++)g_string_append_c(deep,']');
+    g_assert_false(agent_json_strict(deep->str,&e));g_assert_nonnull(e);g_clear_error(&e);g_string_free(deep,TRUE);
+}
+static void strict_coding_json(void) {
+    GError *e=NULL;Plan p={0};
+    g_assert_true(parse_plan(valid_plan,&p,&e));char *original=p.summary;
+    char *prefix=g_strndup(valid_plan,strlen(valid_plan)-1);
+    char *bad[]={
+        g_strconcat(prefix,"/* comment */}",NULL),
+        g_strconcat(prefix,",}",NULL),
+        g_strconcat(prefix,",\"summary\":\"duplicate\"}",NULL),
+        g_strconcat(prefix,",\"\\u0073ummary\":\"escaped duplicate\"}",NULL),
+        g_strconcat(valid_plan,"{}",NULL),
+        g_strdup("{'summary':'read','steps':['read'],'files':[],'commands':[],'read_files':['main.c']}"),
+        NULL
+    };
+    for(guint i=0;bad[i];i++) {
+        g_assert_false(parse_plan(bad[i],&p,&e));g_assert_nonnull(e);g_clear_error(&e);
+        g_assert_true(p.summary==original);g_assert_cmpuint(p.count,==,1);g_free(bad[i]);
+    }
+    g_free(prefix);plan_clear(&p);
+}
 static void envelope(void) {
     GError *e=NULL;
     char *s=completion_content("{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"héllo\"}}]}",&e);
@@ -188,6 +271,10 @@ int main(int argc,char **argv) {
     g_test_init(&argc,&argv,NULL); g_assert_cmpint(curl_global_init(CURL_GLOBAL_DEFAULT),==,CURLE_OK);
     g_test_add_func("/protocol/filenames",filenames); g_test_add_func("/protocol/questions",questions);
     g_test_add_func("/protocol/plans",plans); g_test_add_func("/protocol/envelope",envelope);
+    g_test_add_func("/protocol/coding-schema-isolation",coding_schema_isolation);
+    g_test_add_func("/protocol/coding-plan-atomicity",coding_plan_atomicity);
+    g_test_add_func("/protocol/strict-json",strict_json);
+    g_test_add_func("/protocol/strict-coding-json",strict_coding_json);
     g_test_add_func("/protocol/request-escaping",request_json); g_test_add_func("/storage/exclusive-write",disk);
     g_test_add_func("/protocol/limits",limits); g_test_add_func("/api/lifetime",api_lifetime);
     g_test_add_func("/project/paths",paths); g_test_add_func("/project/backup-conflicts",project_edits);

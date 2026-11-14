@@ -242,3 +242,65 @@ for this update. No exact inference token/cost reduction is claimed. Responses
 still replays its existing opaque history, including any previously approved
 images; local mode discards older images/history. The UIA path reduces new image
 observations, and project deltas avoid resending unrelated file contents.
+
+## Schema separation and workspace UI - 2026-11-13
+
+The earlier hybrid plan shape is superseded by the action-only desktop contract
+in HYBRID-OBSERVATION.md. C session configuration chooses the validator; coding
+and desktop model output cannot choose or change modes. Unknown/mixed fields,
+duplicate decoded JSON keys, comments, extra roots, single quotes, NUL and
+truncation are rejected before any partial execution.
+
+Executed using the existing Windows MSYS2 UCRT64 / Node toolchain:
+
+```sh
+make all check
+cd workspace-ui
+node --test tests/*.test.mjs
+node tests/desktop-smoke.mjs
+node --check desktop.js
+node --check approval.js
+node --check first-run.js
+node build.mjs
+```
+
+- **47 C tests passed**, clean compilation: 20 core, 6 native guards, 15 desktop
+  protocol, 6 project state. Atomic validation leaves the prior complete plan
+  unchanged on any invalid batch tail. Reads remain a separate coding round.
+- **51 Node tests passed**, including six real C session-mode cases. Pure project
+  rejects desktop-only/mixed plans. Ambiguous legacy computer requests and missing
+  desktop targets fail before project inspection. Explicit commands mode still
+  executes real commands, each blocked until its own ACK. Existing import,
+  provider isolation, authentication, queue, cancellation and denial tests passed.
+- Native desktop smoke: real click/type in the disposable Win32 fixture through
+  both Chat and Responses, followed by explicit observe and screenshot rounds.
+  Five separate gates per run (initial observe, click, type, observe, screenshot).
+  The first three requests contained no PNG; the fourth contained one approved
+  image. Coding-only, mixed and truncated replies to the real desktop loop emitted
+  no input/file/command gates and no coding-validator error. Thin-state fallback
+  still needed separate observe and screenshot approvals.
+- Browser project check: approved one file replacement, GCC build and executable
+  test separately; the C engine reported both exits zero. The revised permission
+  card initially focused No. It also rendered correctly in light mode.
+- Browser desktop check: selected the disposable fixture and answered questions;
+  approved text observation, inspected a critical click card with its target,
+  local endpoint and coordinates, then denied it. Repeated with Escape. Both
+  closed the chat and discarded the pending click. Structured UI showed process,
+  focus, nearby controls, bounds and protected-value omission without a PNG.
+- Browser setup/import: Skip, no setup repeat after reload, Settings replay,
+  and local app-history discovery rendered correctly. No real history was imported
+  during browser checks; automated import fixtures passed. No console errors.
+- Visual checks used the actual 1280x720 browser and a roughly 520px conversation
+  pane beside the workspace. A viewport override did not change the browser size
+  and was reset; smaller full-window breakpoints are not claimed as tested.
+
+Evidence images in the working folder: ui-before.png, ui-after.png,
+ui-approval-before.png, ui-approval-after.png, ui-approval-light.png,
+ui-desktop-approval-after.png, ui-observation-after.png and ui-setup-after.png.
+Design principles and surface notes: UI-RESEARCH.md.
+
+No live OpenAI or installed local-model inference, macOS/Linux runtime, or broad
+third-party app coverage was tested. Deterministic local model replies establish
+protocol/driver behavior, not model competence. Native revalidation cannot make
+arbitrary apps atomic. Empty actions mean review, not independently verified
+task success. GitHub CI must be checked on the uploaded commit separately.
