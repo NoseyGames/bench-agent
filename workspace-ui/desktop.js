@@ -38,12 +38,12 @@ function showDesktopAction(event){
   desktopExpected.textContent=typeof action?.expected==='string'?'Expected: '+action.expected:'';
   if(typeof action?.evidence==='string')desktopVerification.textContent='Model check'+(typeof action.verification==='string'?' · '+action.verification:'')+': '+action.evidence;
 }
-const desktopButton=document.createElement('button');desktopButton.textContent='Control an app';desktopButton.title='Choose a Windows app for screenshot-based mouse and keyboard control';$('#chat-main header .header-actions').prepend(desktopButton);
+const desktopButton=document.createElement('button');desktopButton.textContent='Control an app';desktopButton.title='Choose a Windows app for observed mouse and keyboard control';$('#chat-main header .header-actions').prepend(desktopButton);
 desktopButton.onclick=async()=>{
   desktopButton.disabled=true;
   try{
     const {windows}=await(await post('desktop-windows',{})).json();const d=document.createElement('dialog');d.className='bench-approval';
-    const h=document.createElement('h2');h.textContent='Control a desktop app';const p=document.createElement('p');p.textContent='Use a vision-capable model. Bench observes the screen, asks before acting, then checks the result. OpenAI uses native tool calls; local models use the vision compatibility loop. Each screenshot and input needs Yes/No approval. Screenshots go to your selected model. Stop anytime with Ctrl+Alt+Shift+F10.';
+    const h=document.createElement('h2');h.textContent='Control a desktop app';const p=document.createElement('p');p.textContent='Bench reads the app’s accessible controls, asks before each action, then checks the result. Screenshots are optional and need a separate Yes; choose a vision-capable model if the app needs them. OpenAI or your selected local model receives the observations. Stop anytime with Ctrl+Alt+Shift+F10.';
     const select=document.createElement('select');select.setAttribute('aria-label','Desktop app');select.style.maxWidth='100%';
     for(const w of windows){const o=document.createElement('option');o.value=w.id;o.textContent=w.title;select.append(o);}
     const use=document.createElement('button');use.textContent='Use selected app';use.disabled=!windows.length;use.onclick=()=>{desktopTarget=select.value;desktopButton.textContent='App: '+select.selectedOptions[0].textContent.slice(0,28);$('#bench-execute').checked=true;d.close();};

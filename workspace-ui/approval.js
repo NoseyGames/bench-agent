@@ -11,14 +11,14 @@ export function askAction(event,signal){
     const note=document.createElement('p');note.textContent='The agent is paused. Yes allows only this action. No stops the agent and closes this chat. Prior completed changes remain.';
     const buttons=document.createElement('div');const no=document.createElement('button'),yes=document.createElement('button');no.textContent='No — close chat';yes.textContent='Yes — allow this action';
     if(event.type==='desktop'){
-      context.textContent='Screenshot destination: '+event.destination;
-      desktopHelp=document.createElement('details');const helpTitle=document.createElement('summary'),helpText=document.createElement('p');helpTitle.textContent='Screen sharing and stop controls';helpText.textContent='After Yes, focus the selected app within 5 seconds if Windows cannot bring it forward. Resume releases a paused action. Ctrl+Alt+Shift+F10 is emergency stop. Each input includes a screen recheck and a new screenshot sent to this model. If the screen changed, no input is sent and the agent asks again.';desktopHelp.append(helpTitle,helpText);
+      context.textContent='Observation destination: '+event.destination;
+      desktopHelp=document.createElement('details');const helpTitle=document.createElement('summary'),helpText=document.createElement('p');helpTitle.textContent='Observation and stop controls';helpText.textContent='After Yes, focus the selected app within 5 seconds if Windows cannot bring it forward. Resume releases a paused action. Ctrl+Alt+Shift+F10 is emergency stop. Each input rechecks the app and returns compact control text. Screenshots need a separate Yes. If app state changes unexpectedly, the remaining actions are discarded and the agent asks again.';desktopHelp.append(helpTitle,helpText);
       try{const parsed=JSON.parse(event.text);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))action=parsed;}catch{}
       if(action){
         const row=(name,value)=>{if(typeof value!=='string'||!value)return;const term=document.createElement('dt'),description=document.createElement('dd');term.textContent=name;description.textContent=value;actionSummary.append(term,description);};
         row('Action',action.action||event.name);row('Why',action.reason);row('Observed',action.observation);row('Expected result',action.expected);
         if(typeof action.evidence==='string')row('Model check'+(typeof action.verification==='string'?' · '+action.verification:''),action.evidence);
-        if(['click','move','scroll'].includes(action.action)&&Number.isInteger(action.x)&&Number.isInteger(action.y))row('Screenshot position',action.x+', '+action.y);
+        if(['click','move','scroll'].includes(action.action)&&Number.isInteger(action.x)&&Number.isInteger(action.y))row('Window position',action.x+', '+action.y);
         if(action.action==='scroll'&&Number.isInteger(action.delta))row('Scroll',String(action.delta));
         row(action.action==='key'?'Key or shortcut':'Exact text to type',action.text);
         const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='Exact action JSON';details.append(summary,code);exact=details;

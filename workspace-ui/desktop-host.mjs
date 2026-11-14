@@ -17,7 +17,7 @@ const here=path.dirname(fileURLToPath(import.meta.url));
 const assets=new Set(['index.html','app.js','state.js','style.css','workspace.css','settings.js','preferences.js','appearance.js','desktop.js','desktop.css','ai.cur','connection.js','providers.mjs','brand.css','brand.svg','chat-import.js','first-run.js','calm.css','app-import.js','approval.js']);
 const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.cur':'image/x-icon','.mjs':'text/javascript','.svg':'image/svg+xml'};
 export function createHost({engine=path.join(here,'..',process.platform==='win32'?'bench-engine.exe':'bench-engine'),engineArgs=[],historyScanner=createHistoryScanner(),computerRoot=path.join(process.env.LOCALAPPDATA||os.homedir(),'Bench','computer-workspace'),token=randomBytes(32).toString('hex')}={}) {
-  const runs=new Map(),questions=new Map(),closedChats=new Set(); let config=profile(),importing=false;
+  const runs=new Map(),questions=new Map(),closedChats=new Set(),states=new Map(); let config=profile(),importing=false;
   const credentials=new Map([['openai|https://api.openai.com/v1',process.env.OPENAI_API_KEY||'']]);
   const keyFor=c=>credentials.get(c.provider+'|'+c.baseUrl)||'';
   async function body(req) {
@@ -90,7 +90,7 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
       if(route==='/api/decision') {
         const run=runs.get(data.id);
         if(!run?.approval||run.cancelled||run.waiting!==data.sequence||run.approval.token!==data.token||typeof data.allow!=='boolean')return send(409,{error:'This permission request is no longer pending.'});
-        if(!data.allow){closedChats.add(run.chatId);questions.delete(run.chatId);await cancel(data.id);return send(200,{closed:true});}
+        if(!data.allow){closedChats.add(run.chatId);questions.delete(run.chatId);states.delete(run.chatId);await cancel(data.id);return send(200,{closed:true});}
         run.approval=null;return send(200,{approved:true});
       }
       if(route==='/api/ack') {
@@ -116,11 +116,16 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
       const root=await fs.realpath(computerMode?computerRoot:data.root);if(!(await fs.stat(root)).isDirectory())throw Error('Project must be a directory');
       if(reservation.cancelled||res.destroyed){cancel(data.id);return;}
       const last=data.messages.filter(m=>m.role==='user').at(-1);if(!last||typeof last.text!=='string')throw Error('A task is required');
-      const pending=questions.get(data.chatId),answer=pending?.root===root&&pending.desktopWindow===desktopWindow;
+      const stateKey=JSON.stringify([root,desktopWindow,config.provider,config.baseUrl,data.model.trim()]);
+      const pending=questions.get(data.chatId),answer=pending?.stateKey===stateKey;
       const attachmentText=(last.files||[]).map(f=>`\nAttached reference ${f.name}:\n${f.content}`).join('');
       const task=answer?pending.task:last.text+attachmentText;
       if(data.instructions!==undefined&&(typeof data.instructions!=='string'||data.instructions.length>128000))throw Error('Invalid instructions');
       const request={key:keyFor(config),endpoint:config.baseUrl+'/chat/completions',jsonMode:config.jsonMode,desktopProtocol:config.provider==='openai'?'responses':'chat',root,computerMode,desktopWindow,model:data.model.trim(),task:task+(data.instructions?`\nUser preferences and instructions:\n${data.instructions}`:''),phase:answer?'execute':'questions',answers:answer?last.text+attachmentText:'',questions:answer?pending.text:''};
+      // Only C-produced state is retained. Browser requests cannot seed it.
+      // Bound to chat/root/window/provider/model; no credentials or images.
+      const prior=states.get(data.chatId);
+      if(prior?.key===stateKey){request.projectState=prior.project||'';request.desktopState=prior.desktop||'';}
       if(answer)questions.delete(data.chatId);
       const env={...process.env};delete env.OPENAI_API_KEY;
       const child=spawn(engine,engineArgs,{cwd:path.dirname(engine),env,windowsHide:true,stdio:['pipe','pipe','pipe']});
@@ -138,7 +143,16 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
         if(run.cancelled)return;
         try {
           const event=JSON.parse(line);
-          if(event.type==='questions'){questions.set(data.chatId,{root,task,text:event.text,desktopWindow});terminal=true;}
+          if(event.type==='state'){
+            const limit=event.name==='project'?128*1024:event.name==='desktop'?16384:0;
+            if(!limit||typeof event.text!=='string'||Buffer.byteLength(event.text)>limit)throw Error('Invalid engine state');
+            const value=JSON.parse(event.text);if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Invalid engine state');
+            const saved=states.get(data.chatId);const next=saved?.key===stateKey?saved:{key:stateKey};
+            next[event.name]=event.text;states.delete(data.chatId);states.set(data.chatId,next);
+            while(states.size>32)states.delete(states.keys().next().value);
+            return;
+          }
+          if(event.type==='questions'){questions.set(data.chatId,{root,task,text:event.text,desktopWindow,stateKey});terminal=true;}
           if(['error','success','review'].includes(event.type))terminal=true;
           if(['preview','command','desktop'].includes(event.type)) {
             // Read-only is enforced before either writes or arbitrary shell commands.
