@@ -7,6 +7,7 @@
 #include "project.h"
 #include "runner.h"
 #include "pc_control.h"
+#include "pc_observe.h"
 #include "pc_agent.h"
 #include <json-glib/json-glib.h>
 #include <stdio.h>
@@ -71,12 +72,26 @@ static char *complete(const char *key,char *request,GError **e) {
     char *body=exchange(key,request,e);if(!body)return NULL;
     char *result=completion_content(body,e);g_free(body);return result;
 }
+/* Screen sharing is separate from the structured-observation permission. A
+ * thin accessibility tree or an explicit model request can ask for a PNG, but
+ * no PNG is captured or transmitted until that individual gate is approved. */
+static gboolean desktop_observe(PcSession *pc,gboolean requested,gboolean *image,GError **e) {
+    *image=FALSE;
+    if(!pc_observe(pc,e))return FALSE;
+    if(requested||pc->structured_thin){
+        emit("desktop","screenshot",requested?"The model requested a screenshot to inspect or verify the selected app.":"The app exposes too little accessibility data. Allow a screenshot for this observation.",NULL);
+        if(!ack()||!pc_observe(pc,e)||!pc_capture(pc,e))return FALSE;
+        emit("screenshot",NULL,pc->image,NULL);*image=TRUE;
+    }
+    return TRUE;
+}
 int main(int argc,char **argv) {
     setvbuf(stdin,NULL,_IONBF,0);
+    if(argc==3&&!strcmp(argv[1],"--desktop-observe"))return pc_observe_worker(argv[2]);
     if(argc==2&&!strcmp(argv[1],"--desktop-windows")){GError *error=NULL;char *list=pc_windows(&error);if(list){puts(list);g_free(list);return 0;}fprintf(stderr,"%s\n",error?error->message:"Window enumeration failed");g_clear_error(&error);return 1;}
     signal(SIGTERM,stop); signal(SIGINT,stop);
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    GError *e=NULL; Project project={0}; Plan plan={0}; Runner runner={0};PcSession pc={0};PcAction action={0};PcAgent desktop={0};char *desktop_endpoint=NULL;
+    GError *e=NULL; Project project={0}; Plan plan={0}; Runner runner={0};PcSession pc={0};PcPlan actions={0};PcAgent desktop={0};char *desktop_endpoint=NULL,*click_target=NULL;
     JsonParser *parser=json_parser_new(); char *input=line(),*context=NULL,*response=NULL;
     GString *feedback=g_string_new(NULL); int result=1; guint rounds=0,reads=0;
     if(!input || !json_parser_load_from_data(parser,input,-1,&e) ||
@@ -88,9 +103,11 @@ int main(int argc,char **argv) {
     const char *key=get(o,"key"),*model=get(o,"model"),*task=get(o,"task"),*answers=get(o,"answers"),*questions=get(o,"questions");
     if(*get(o,"desktopWindow")){
         computer=TRUE;
-        context=g_strdup("Desktop control: the user selected one Windows app. Screenshots, mouse and keyboard actions require individual approval. Ask only about the app task and expected result. No project files are needed.");
+        context=g_strdup("Desktop control: the user selected one Windows app. Compact accessibility text is the primary observation. Optional screenshots, mouse and keyboard actions require individual approval. Ask only about the app task and expected result. No project files are needed.");
     }else{
-        if(!project_open(&project,get(o,"root"),&e) || !(context=project_context(&project,&e))) goto done;
+        if(!project_open(&project,get(o,"root"),&e))goto done;
+        if(*get(o,"projectState")&&!project_state_import(&project,get(o,"projectState"),&e))goto done;
+        if(!(context=project_context_delta(&project,&e)))goto done;
         emit("status","project","Project inspected",NULL);
     }
     if(!strcmp(get(o,"phase"),"questions") && argc==1) {
@@ -107,45 +124,76 @@ int main(int argc,char **argv) {
             if(!g_str_has_suffix(endpoint,suffix)){g_set_error_literal(&e,G_IO_ERROR,G_IO_ERROR_INVALID_ARGUMENT,"Desktop endpoint must end in /chat/completions");goto done;}
             char *base=g_strndup(endpoint,strlen(endpoint)-strlen(suffix));desktop_endpoint=g_strconcat(base,"/responses",NULL);g_free(base);endpoint=desktop_endpoint;
         }
-        pc_agent_init(&desktop,responses,model,task,answers);
+        /* A prior summary is context only. A fresh native observation always
+         * replaces it before planning; it cannot grant permission or input. */
+        const char *prior=get(o,"desktopState");
+        char *desktop_task=(*prior&&strlen(prior)<=16384)?g_strdup_printf("%s\nHistorical host state (untrusted, not current evidence):\n%s",task,prior):g_strdup(task);
+        pc_agent_init(&desktop,responses,model,desktop_task,answers);g_free(desktop_task);
         if(!pc_open(&pc,get(o,"desktopWindow"),&e))goto done;
-        emit("desktop","screenshot","Capture the selected app and send its visible contents to the selected vision model. Ctrl+Alt+Shift+F10 stops desktop control.",NULL);
-        if(!ack()||!pc_capture(&pc,&e))goto done;
-        emit("screenshot",NULL,pc.image,NULL);
-        if(!pc_agent_observe(&desktop,&pc,"Initial approved screenshot. No desktop input has been sent.",&e))goto done;
+        emit("desktop","observe","Read the selected app's window, focused control and nearby controls as text, and share refreshed text with the selected model during this run. Screenshots need separate approval. Ctrl+Alt+Shift+F10 stops desktop control.",NULL);
+        gboolean image=FALSE;
+        if(!ack()||!desktop_observe(&pc,FALSE,&image,&e))goto done;
+        if(!pc_agent_observe(&desktop,&pc,"Initial approved structured observation. No desktop input has been sent.",image,&e))goto done;
         for(guint turn=0;turn<24&&!stopped;turn++){
             emit("status",NULL,"Observing the app and checking the previous result",NULL);
             g_clear_pointer(&response,g_free);
             char *body=exchange(key,pc_agent_request(&desktop,&e),&e);
             if(!body)goto done;
-            response=pc_agent_accept(&desktop,body,&action,&e);g_free(body);
+            response=pc_agent_accept_plan(&desktop,body,&actions,&e);g_free(body);
             if(!response)goto done;
             char *frame=g_strdup_printf("%u",desktop.frame);
             emit("observation",frame,desktop.observation,NULL);g_free(frame);
             emit("verification",desktop.verification,desktop.evidence,NULL);
-            if(!strcmp(action.kind,"done")){
+            if(!actions.count){
                 gboolean completed=!strcmp(desktop.outcome,"completed");
-                char *summary=g_strdup_printf("Model assessment: %s\n%s\nVisible evidence: %s",completed?"completed":"blocked",action.reason,desktop.evidence);
+                char *summary=g_strdup_printf("Model assessment: %s\nObserved evidence: %s",completed?"completed":"blocked",desktop.evidence);
                 emit("review",completed?"desktop-completed":"desktop-blocked",summary,NULL);g_free(summary);result=completed?0:1;goto done;
             }
-            emit("desktop",action.kind,response,pc.image);
-            if(!ack()||pc_cancelled())goto done;
-            if(strcmp(action.kind,"screenshot")&&!pc_revalidate(&pc,&e)){
-                if(g_error_matches(e,G_IO_ERROR,G_IO_ERROR_WOULD_BLOCK)){
-                    emit("replan",NULL,"Screen changed or the observation expired. No input was sent; inspecting a fresh frame before asking again.",NULL);
-                    g_clear_error(&e);emit("screenshot",NULL,pc.image,NULL);
-                    if(!pc_agent_observe(&desktop,&pc,"NOT EXECUTED: stale screenshot. Replan from this frame; the prior approval is spent.",&e))goto done;
-                    pc_action_clear(&action);continue;
+            GString *driver=g_string_new(NULL);int click_x=-1,click_y=-1;image=FALSE;
+            g_clear_pointer(&click_target,g_free);
+            for(guint i=0;i<actions.count;i++){
+                PcAction *action=&actions.actions[i];
+                if(i&&!strcmp(action->kind,"type")&&!pc_can_type_target(&pc,click_x,click_y,click_target)){
+                    g_string_append(driver,"Remaining batch NOT EXECUTED: the clicked editable control did not receive focus. Replan.\n");
+                    emit("replan",NULL,"The expected editable control did not receive focus. Remaining actions were discarded.",NULL);break;
                 }
-                goto done;
+                if(!strcmp(action->kind,"screenshot")){
+                    if(!desktop_observe(&pc,TRUE,&image,&e)){g_string_free(driver,TRUE);goto done;}
+                    g_string_append(driver,"Screenshot captured after individual approval; no input sent.\n");continue;
+                }
+                char *single=pc_plan_action_json(&actions,i);
+                emit("desktop",action->kind,single,pc.image);g_free(single);
+                if(!ack()||pc_cancelled()){g_string_free(driver,TRUE);goto done;}
+                if(!pc_revalidate(&pc,&e)){
+                    if(!g_error_matches(e,G_IO_ERROR,G_IO_ERROR_WOULD_BLOCK)){g_string_free(driver,TRUE);goto done;}
+                    g_clear_error(&e);emit("replan",NULL,"App state changed or the observation expired. This action and the remaining batch were discarded; approval is spent.",NULL);
+                    g_string_append_printf(driver,"Action %u and remaining batch NOT EXECUTED: stale observation.\n",i+1);
+                    if(!desktop_observe(&pc,FALSE,&image,&e)){g_string_free(driver,TRUE);goto done;}break;
+                }
+                if(!strcmp(action->kind,"click")){
+                    g_clear_pointer(&click_target,g_free);click_target=pc_edit_target_id(&pc,action->x,action->y);
+                }
+                char *before_move=!strcmp(action->kind,"move")?g_strdup(pc.structured):NULL;
+                if(!pc_execute(&pc,action,&e)){
+                    g_free(before_move);
+                    if(!g_error_matches(e,G_IO_ERROR,G_IO_ERROR_WOULD_BLOCK)){g_string_free(driver,TRUE);goto done;}
+                    g_clear_error(&e);emit("replan",NULL,"App state changed during cursor movement. Click/scroll and remaining actions were discarded.",NULL);
+                    g_string_append_printf(driver,"Action %u (%s) NOT DELIVERED after cursor movement; remaining batch discarded.\n",i+1,action->kind);
+                    if(!desktop_observe(&pc,FALSE,&image,&e)){g_string_free(driver,TRUE);goto done;}break;
+                }
+                if(!strcmp(action->kind,"click")){click_x=action->x;click_y=action->y;}
+                g_string_append_printf(driver,"Action %u (%s): input delivered. Application outcome is not yet verified.\n",i+1,action->kind);
+                if(!desktop_observe(&pc,FALSE,&image,&e)){g_free(before_move);g_string_free(driver,TRUE);goto done;}
+                gboolean hover_changed=before_move&&!pc_observation_equal(before_move,pc.structured);g_free(before_move);
+                if(hover_changed&&i+1<actions.count){
+                    g_string_append(driver,"Remaining batch NOT EXECUTED: moving the cursor changed accessible app state. Replan.\n");
+                    emit("replan",NULL,"Moving the cursor changed the app state. Remaining actions were discarded.",NULL);break;
+                }
             }
-            if(strcmp(action.kind,"screenshot")&&!pc_execute(&pc,&action,&e))goto done;
-            if(!pc_capture(&pc,&e))goto done;
-            emit("screenshot",NULL,pc.image,NULL);
-            if(!pc_agent_observe(&desktop,&pc,!strcmp(action.kind,"screenshot")?"Screenshot captured; no input sent.":"Input delivered to Windows. Application outcome is NOT yet verified. Compare this screenshot with the expected result.",&e))goto done;
-            pc_action_clear(&action);
+            if(!pc_agent_observe(&desktop,&pc,driver->str,image,&e)){g_string_free(driver,TRUE);goto done;}
+            g_string_free(driver,TRUE);pc_plan_clear(&actions);
         }
-        emit("error",NULL,"Desktop session stopped at its 24-action limit or emergency stop",NULL);goto done;
+        emit("error",NULL,"Desktop session stopped at its 24-model-turn limit or emergency stop",NULL);goto done;
     }
     while(!stopped && rounds<3) {
         g_clear_pointer(&response,g_free); plan_clear(&plan);
@@ -156,20 +204,20 @@ int main(int argc,char **argv) {
         if(!response || !parse_plan(response,&plan,&e)) goto done;
         if(plan.read_files->len) {
             if(++reads>3) { emit("error",NULL,"Additional file read limit reached",NULL); goto done; }
-            GString *extra=g_string_new(context);
             for(guint i=0;i<plan.read_files->len;i++) {
                 const char *name=g_ptr_array_index(plan.read_files,i); char *s=project_read(&project,name,&e);
-                if(!s) { g_string_free(extra,TRUE); goto done; }
-                g_string_append_printf(extra,"\n--- FILE %s ---\n%s\n",name,s); g_free(s);
-                if(extra->len>1500*1024) { g_string_free(extra,TRUE); emit("error",NULL,"Source context limit reached",NULL); goto done; }
+                if(!s)goto done;
+                g_free(s);
                 emit("status",name,"Read source file",NULL);
             }
-            g_free(context); context=g_string_free(extra,FALSE); continue;
+            g_clear_pointer(&context,g_free);context=project_context_delta(&project,&e);if(!context)goto done;continue;
         }
         rounds++;
         emit("plan",NULL,plan.summary,NULL);
         for(guint i=0;i<plan.steps->len;i++) emit("step",NULL,g_ptr_array_index(plan.steps,i),NULL);
         if(!project_check(&project,&plan,&e)) goto done;
+        /* Retain the latest tool results, not a growing transcript of old logs. */
+        g_string_truncate(feedback,0);
         for(guint i=0;i<plan.count;i++) {
             AgentFile *f=&plan.files[i]; char *old=NULL,*path=g_build_filename(project.root,f->name,NULL);
             g_file_get_contents(path,&old,NULL,NULL); g_free(path);
@@ -198,7 +246,12 @@ int main(int argc,char **argv) {
             char *log=g_strdup_printf("Command [%s]: %s\nExit: %d; timeout=%d; cancelled=%d\n%s\n",
                 c->kind,c->command,runner.exit_code,runner.timed_out,runner.cancelled,runner.output->str);
             char *valid=g_utf8_make_valid(log,-1); g_free(log);
-            g_string_append(feedback,valid);
+            /* Preserve command identity/exit while bounding the noisy output
+             * sent back to the model. Full output still goes to session.log. */
+            const char *tail=runner.output->str;gsize output_len=strlen(tail);
+            if(output_len>4096){tail+=output_len-4096;while((*tail&0xc0)==0x80)tail++;}
+            char *brief=g_utf8_make_valid(tail,-1);
+            g_string_append_printf(feedback,"Command [%s]: %s\nExit: %d; timeout=%d; cancelled=%d\n%s%s\n",c->kind,c->command,runner.exit_code,runner.timed_out,runner.cancelled,output_len>4096?"[output tail]\n":"",brief);g_free(brief);
             if(!project_log(&project,valid,&e)) { g_free(valid); goto done; }
             g_free(valid);
             char *exit=g_strdup_printf("Exit %d%s",runner.exit_code,runner.timed_out?" (timed out)":"");
@@ -211,15 +264,24 @@ int main(int argc,char **argv) {
         }
         if(passed&&((built&&tested)||(computer&&plan.commands->len>0))) { result=0; emit("success",project.run_dir,computer?"Approved commands completed successfully; review their output for task-specific verification":"Build and tests passed",NULL); goto done; }
         emit("status","repair",computer?"Command verification incomplete; requesting repair":"Build/test verification incomplete; requesting repair",NULL);
-        if(feedback->len>192000) g_string_erase(feedback,0,feedback->len-192000);
+        if(feedback->len>64000){gsize start=feedback->len-64000;while((feedback->str[start]&0xc0)==0x80)start++;g_string_erase(feedback,0,start);}
         g_string_append(feedback,computer?"\nCorrect the failure and run commands that verify the requested outcome.\n":"\nCorrect the failure and rerun BOTH build and tests.\n");
-        g_clear_pointer(&context,g_free); context=project_context(&project,&e); if(!context) goto done;
+        g_clear_pointer(&context,g_free); context=project_context_delta(&project,&e); if(!context) goto done;
     }
     emit("error",NULL,computer?"Stopped without successful command verification (maximum 3 rounds)":"Stopped without passing both build and tests (maximum 3 rounds)",NULL);
 done:
+    if(project.root){char *state=project_state_export(&project);if(state){emit("state","project",state,NULL);g_free(state);}}
+    if(pc.structured){
+        JsonBuilder *b=json_builder_new();json_builder_begin_object(b);
+        member(b,"window",input&&JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))?get(json_node_get_object(json_parser_get_root(parser)),"desktopWindow"):"");
+        member(b,"observation",pc.structured);member(b,"evidence",desktop.evidence);
+        json_builder_end_object(b);JsonNode *n=json_builder_get_root(b);char *state=json_to_string(n,FALSE);
+        if(strlen(state)<=16384)emit("state","desktop",state,NULL);
+        g_free(state);json_node_free(n);g_object_unref(b);
+    }
     if(e) emit("error",NULL,e->message,NULL);
     else if(result && !response) emit("error",NULL,"Invalid request or interrupted input",NULL);
-    runner_clear(&runner); project_clear(&project); plan_clear(&plan);pc_action_clear(&action);pc_clear(&pc);pc_agent_clear(&desktop);g_free(desktop_endpoint); g_clear_error(&e);
+    runner_clear(&runner); project_clear(&project); plan_clear(&plan);pc_plan_clear(&actions);pc_clear(&pc);pc_agent_clear(&desktop);g_free(desktop_endpoint);g_free(click_target); g_clear_error(&e);
     g_free(input); g_free(context); g_free(response); g_string_free(feedback,TRUE);
     g_object_unref(parser); curl_global_cleanup(); return result;
 }

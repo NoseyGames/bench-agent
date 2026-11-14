@@ -1,4 +1,5 @@
 #include "pc_control.h"
+#include "pc_observe.h"
 #include <gio/gio.h>
 #include <json-glib/json-glib.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -13,6 +14,37 @@ static char *json_text(JsonNode *n){JsonGenerator *g=json_generator_new();json_g
 static const char *str(JsonObject *o,const char *k){JsonNode *n=json_object_get_member(o,k);return n&&JSON_NODE_HOLDS_VALUE(n)&&json_node_get_value_type(n)==G_TYPE_STRING?json_node_get_string(n):NULL;}
 static gboolean integer(JsonObject *o,const char *k,int min,int max,int *out){JsonNode *n=json_object_get_member(o,k);if(!n||!JSON_NODE_HOLDS_VALUE(n)||json_node_get_value_type(n)!=G_TYPE_INT64)return FALSE;gint64 v=json_node_get_int(n);if(v<min||v>max)return FALSE;*out=(int)v;return TRUE;}
 void pc_action_clear(PcAction *a){g_free(a->kind);g_free(a->text);g_free(a->reason);memset(a,0,sizeof *a);}
+
+static gboolean edit_contains(JsonObject *control,int x,int y){
+    const char *role_name=str(control,"role");JsonNode *bn=json_object_get_member(control,"bounds"),*password=json_object_get_member(control,"password");
+    if(!role_name||(strcmp(role_name,"edit")&&strcmp(role_name,"combobox"))||!password||!JSON_NODE_HOLDS_VALUE(password)||json_node_get_value_type(password)!=G_TYPE_BOOLEAN||json_node_get_boolean(password)||!bn||!JSON_NODE_HOLDS_ARRAY(bn))return FALSE;
+    JsonArray *bounds=json_node_get_array(bn);if(json_array_get_length(bounds)!=4)return FALSE;gint64 v[4];
+    for(guint i=0;i<4;i++){JsonNode *n=json_array_get_element(bounds,i);if(!JSON_NODE_HOLDS_VALUE(n)||json_node_get_value_type(n)!=G_TYPE_INT64)return FALSE;v[i]=json_node_get_int(n);if(v[i]<0||v[i]>1600)return FALSE;}
+    return v[2]>0&&v[3]>0&&x>=v[0]&&y>=v[1]&&x<v[0]+v[2]&&y<v[1]+v[3];
+}
+static JsonParser *editable_snapshot(const PcSession *s){
+    if(!s||!s->structured||s->structured_thin||s->captured_us<=0||g_get_monotonic_time()-s->captured_us>PC_OBSERVATION_MAX_AGE_US)return NULL;
+    JsonParser *p=json_parser_new();
+    if(json_parser_load_from_data(p,s->structured,-1,NULL)&&JSON_NODE_HOLDS_OBJECT(json_parser_get_root(p))){JsonObject *root=json_node_get_object(json_parser_get_root(p));JsonNode *wn=json_object_get_member(root,"window");if(wn&&JSON_NODE_HOLDS_OBJECT(wn)){JsonNode *pid=json_object_get_member(json_node_get_object(wn),"pid");if(pid&&JSON_NODE_HOLDS_VALUE(pid)&&json_node_get_value_type(pid)==G_TYPE_INT64&&json_node_get_int(pid)==s->pid)return p;}}
+    g_object_unref(p);return NULL;
+}
+static gboolean runtime_id(const char *id){return id&&*id&&strlen(id)<=160&&!strchr(id,':');}
+gboolean pc_can_type_at(const PcSession *s,int x,int y){
+    JsonParser *p=editable_snapshot(s);if(!p)return FALSE;JsonObject *root=json_node_get_object(json_parser_get_root(p));JsonNode *n=json_object_get_member(root,"focused");gboolean ok=n&&JSON_NODE_HOLDS_OBJECT(n)&&edit_contains(json_node_get_object(n),x,y);g_object_unref(p);return ok;
+}
+char *pc_edit_target_id(const PcSession *s,int x,int y){
+    JsonParser *p=editable_snapshot(s);if(!p)return NULL;JsonObject *root=json_node_get_object(json_parser_get_root(p));JsonNode *n=json_object_get_member(root,"controls");char *id=NULL;
+    if(n&&JSON_NODE_HOLDS_ARRAY(n)){JsonArray *controls=json_node_get_array(n);for(guint i=0;i<json_array_get_length(controls);i++){JsonNode *item=json_array_get_element(controls,i);if(!JSON_NODE_HOLDS_OBJECT(item))continue;JsonObject *control=json_node_get_object(item);const char *candidate=str(control,"id");if(edit_contains(control,x,y)&&runtime_id(candidate)){
+                /* Overlapping editable controls are ambiguous; get a new plan
+                 * after clicking instead of authorizing an assumed target. */
+                if(id&&strcmp(id,candidate)){g_clear_pointer(&id,g_free);break;}if(!id)id=g_strdup(candidate);
+            }}}
+    g_object_unref(p);return id;
+}
+gboolean pc_can_type_target(const PcSession *s,int x,int y,const char *id){
+    if(!runtime_id(id)||!pc_can_type_at(s,x,y))return FALSE;
+    JsonParser *p=editable_snapshot(s);if(!p)return FALSE;JsonObject *root=json_node_get_object(json_parser_get_root(p));JsonObject *focused=json_object_get_object_member(root,"focused");const char *current=str(focused,"id");gboolean ok=runtime_id(current)&&!strcmp(current,id);g_object_unref(p);return ok;
+}
 gboolean pc_parse(const char *json,PcAction *a,GError **e){
     JsonParser *p=json_parser_new();gboolean ok=FALSE;PcAction next={0};
     if(!json||strlen(json)>16000||!json_parser_load_from_data(p,json,-1,e))goto done;
@@ -117,18 +149,23 @@ gboolean pc_capture(PcSession *s,GError **e){
     s->left=r.left;s->top=r.top;s->width=w;s->height=h;s->image_width=iw;s->image_height=ih;
     s->client_x=cx;s->client_y=cy;s->client_width=cw;s->client_height=ch;s->captured_us=g_get_monotonic_time();return TRUE;
 }
+gboolean pc_observe(PcSession *s,GError **e){return focus(s,e)&&pc_observe_window(s,e);}
+
 gboolean pc_revalidate(PcSession *s,GError **e){
-    if(!s->image||!s->pixels||s->captured_us<=0)return fail(e,"Capture an approved screenshot before validating desktop input.");
-    /* Do not mutate the old geometry until comparison is complete. pc_capture
-     * owns only the newly allocated frame in this temporary session. */
-    PcSession fresh=*s;fresh.image=NULL;fresh.pixels=NULL;
-    if(!pc_capture(&fresh,e)){g_free(fresh.image);g_free(fresh.pixels);return FALSE;}
+    gboolean image=s->image&&s->pixels;
+    if((!s->structured&&!image)||s->captured_us<=0)return fail(e,"Observe the selected app before validating desktop input.");
+    if(s->structured&&s->structured_thin&&!image)return fail(e,"The app exposes too little structured state. An approved screenshot is required before input.");
+    /* Temporary owned state keeps the old observation intact on hard failure. */
+    PcSession fresh=*s;fresh.image=NULL;fresh.pixels=NULL;fresh.structured=NULL;
+    if((s->structured&&!pc_observe(&fresh,e))||(image&&!pc_capture(&fresh,e))){g_free(fresh.image);g_free(fresh.pixels);g_free(fresh.structured);return FALSE;}
     const char *stale=NULL;
     if(fresh.captured_us-s->captured_us>PC_OBSERVATION_MAX_AGE_US)
         stale="The observation expired while the action was being planned or approved. No input was sent. Review the fresh observation.";
     else if(fresh.left!=s->left||fresh.top!=s->top||fresh.width!=s->width||fresh.height!=s->height||fresh.image_width!=s->image_width||fresh.image_height!=s->image_height||fresh.client_x!=s->client_x||fresh.client_y!=s->client_y||fresh.client_width!=s->client_width||fresh.client_height!=s->client_height)
         stale="The app moved, resized, or changed its client bounds after observation. No input was sent. Replan from the fresh observation.";
-    else{
+    else if(s->structured&&!pc_observation_equal(s->structured,fresh.structured))
+        stale="The focused control or nearby app controls changed after observation. No input was sent. Replan and approve the new action.";
+    else if(image){
         /* Ignore non-client focus decoration and tiny caret changes. At least
          * 80 significantly changed RGB pixels is conservative for text/buttons,
          * but is deliberately a heuristic: animation can trigger it and small
@@ -143,7 +180,7 @@ gboolean pc_revalidate(PcSession *s,GError **e){
             }
         }
     }
-    g_free(s->image);g_free(s->pixels);*s=fresh;
+    g_free(s->image);g_free(s->pixels);g_free(s->structured);*s=fresh;
     if(stale){g_set_error_literal(e,G_IO_ERROR,G_IO_ERROR_WOULD_BLOCK,stale);return FALSE;}
     return TRUE;
 }
@@ -152,7 +189,7 @@ static gboolean ready(PcSession *s,GError **e){
     if(GetForegroundWindow()!=window_of(s))return fail(e,"Focus changed. Desktop input stopped.");
     RECT r;if(!GetWindowRect(window_of(s),&r))return fail(e,"Cannot verify app bounds.");
     int vx=GetSystemMetrics(SM_XVIRTUALSCREEN),vy=GetSystemMetrics(SM_YVIRTUALSCREEN);r.left=MAX(r.left,vx);r.top=MAX(r.top,vy);r.right=MIN(r.right,vx+GetSystemMetrics(SM_CXVIRTUALSCREEN));r.bottom=MIN(r.bottom,vy+GetSystemMetrics(SM_CYVIRTUALSCREEN));
-    if(r.left!=s->left||r.top!=s->top||r.right-r.left!=s->width||r.bottom-r.top!=s->height)return fail(e,"Window moved or resized since the screenshot. Start a fresh observation.");
+    if(r.left!=s->left||r.top!=s->top||r.right-r.left!=s->width||r.bottom-r.top!=s->height)return fail(e,"Window moved or resized since observation. Start a fresh observation.");
     return TRUE;
 }
 static gboolean inputs(INPUT *v,UINT n,GError **e){
@@ -173,7 +210,8 @@ static gboolean modifiers_released(GError **e){
     return TRUE;
 }
 gboolean pc_execute(PcSession *s,const PcAction *a,GError **e){
-    if(!s->image)return fail(e,"Capture an approved screenshot before sending input.");
+    if((!s->image&&!s->structured)||s->captured_us<=0||g_get_monotonic_time()-s->captured_us>PC_OBSERVATION_MAX_AGE_US)return fail(e,"Obtain a fresh approved observation before sending input.");
+    if(s->structured&&s->structured_thin&&!s->image)return fail(e,"An approved screenshot is required for this app's incomplete structured observation.");
     if(!focus(s,e)||!ready(s,e))return FALSE;
     if(!modifiers_released(e))return FALSE;
     if(!strcmp(a->kind,"move")||!strcmp(a->kind,"click")||!strcmp(a->kind,"scroll")){
@@ -182,6 +220,14 @@ gboolean pc_execute(PcSession *s,const PcAction *a,GError **e){
         for(int i=1;i<=50;i++){if(!ready(s,e))return FALSE;double t=i/50.0;t=t*t*(3-2*t);if(!SetCursorPos(start.x+(int)((target.x-start.x)*t),start.y+(int)((target.y-start.y)*t)))return fail(e,"Cannot move cursor.");Sleep(20);}
         if(!ready(s,e)||!modifiers_released(e))return FALSE;
         if(GetAncestor(WindowFromPoint(target),GA_ROOT)!=window_of(s))return fail(e,"Another window covers the target point. Input stopped.");
+        /* Hover during the deliberately slow cursor travel may open a menu,
+         * replace the target or otherwise change its meaning. Compare again
+         * at the destination before any click/wheel input, not only before
+         * travel. WOULD_BLOCK carries the new state back for replanning. */
+        if(strcmp(a->kind,"move")){
+            if(!pc_revalidate(s,e)||!ready(s,e)||!modifiers_released(e))return FALSE;
+            if(GetAncestor(WindowFromPoint(target),GA_ROOT)!=window_of(s))return fail(e,"Another window covers the target point. Input stopped.");
+        }
         if(!strcmp(a->kind,"click")){INPUT v[2]={{0}};v[0].type=v[1].type=INPUT_MOUSE;v[0].mi.dwFlags=MOUSEEVENTF_LEFTDOWN;v[1].mi.dwFlags=MOUSEEVENTF_LEFTUP;return inputs(v,2,e);}
         if(!strcmp(a->kind,"scroll")){INPUT v={0};v.type=INPUT_MOUSE;v.mi.dwFlags=MOUSEEVENTF_WHEEL;v.mi.mouseData=(DWORD)(a->delta*WHEEL_DELTA);return inputs(&v,1,e);}return TRUE;
     }
@@ -221,15 +267,16 @@ gboolean pc_execute(PcSession *s,const PcAction *a,GError **e){
     }
     return fail(e,"Unsupported input action.");
 }
-void pc_clear(PcSession *s){if(hotkey_registered)UnregisterHotKey(NULL,0xB31);hotkey_registered=FALSE;g_free(s->image);g_free(s->pixels);memset(s,0,sizeof *s);}
+void pc_clear(PcSession *s){if(hotkey_registered)UnregisterHotKey(NULL,0xB31);hotkey_registered=FALSE;g_free(s->image);g_free(s->pixels);g_free(s->structured);memset(s,0,sizeof *s);}
 #else
 gboolean pc_cancelled(void){return FALSE;}
 char *pc_windows(GError **e){fail(e,"Desktop control is supported on Windows only.");return NULL;}
 gboolean pc_open(PcSession *s,const char *id,GError **e){(void)s;(void)id;return fail(e,"Desktop control is supported on Windows only.");}
 gboolean pc_capture(PcSession *s,GError **e){(void)s;return fail(e,"Desktop control is supported on Windows only.");}
+gboolean pc_observe(PcSession *s,GError **e){return pc_observe_window(s,e);}
 gboolean pc_revalidate(PcSession *s,GError **e){(void)s;return fail(e,"Desktop control is supported on Windows only.");}
 gboolean pc_execute(PcSession *s,const PcAction *a,GError **e){(void)s;(void)a;return fail(e,"Desktop control is supported on Windows only.");}
-void pc_clear(PcSession *s){g_free(s->image);g_free(s->pixels);memset(s,0,sizeof *s);}
+void pc_clear(PcSession *s){g_free(s->image);g_free(s->pixels);g_free(s->structured);memset(s,0,sizeof *s);}
 #endif
 
 char *pc_request(const char *model,const char *task,const char *answers,const PcSession *s,const char *history){

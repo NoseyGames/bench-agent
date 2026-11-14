@@ -234,7 +234,7 @@ Imports are bounded to 24 MB per response and 64 MB per transcript. Browser stor
 
 ## Computer mode and action permissions
 
-No project is required. **Open project → Use computer mode** clears the folder selection. Bench uses `%LOCALAPPDATA%/Bench/computer-workspace` as a small working directory. It does not scan your whole home directory for context. Approved commands can target other locations and automate programs through shell/PowerShell, subject to your normal account permissions. There is no automatic administrator elevation. Screenshot-driven input is available through **Control an app**, described below.
+No project is required. **Open project → Use computer mode** clears the folder selection. Bench uses `%LOCALAPPDATA%/Bench/computer-workspace` as a small working directory. It does not scan your whole home directory for context. Approved commands can target other locations and automate programs through shell/PowerShell, subject to your normal account permissions. There is no automatic administrator elevation. Observed desktop input is available through **Control an app**, described below.
 
 The host assesses each proposed command and file write before the C engine proceeds. All shell commands require permission, including seemingly harmless or disguised commands: arbitrary scripts cannot be reliably classified as safe. Recognized destructive command names receive a critical label; other commands receive a high label. File writes also require approval. The label explains risk; it is not a guarantee about the command's effects.
 
@@ -244,28 +244,33 @@ Permission covers the displayed command and its child processes. Bench cannot pa
 
 Validated for this update: 16 C checks and 41 JavaScript integration tests, including actual no-project commands, missing/stale approvals, denial before execution, and denial closing the chat on the host. Live model-driven computer tasks remain untested.
 
-## Actual desktop control (Windows)
+## Hybrid desktop control (Windows)
 
-Open the app you want to operate, click **Control an app** in Bench's header, select its window, then **Use selected app**. Select a vision-capable OpenAI or local model and describe the task. Answer the clarification questions. App selection enables execution; composer **Read only** still blocks it. Use **Control an app → Use commands instead** to return to the shell/coding workflow.
+Choose **Control an app**, select its window, submit a task and answer the questions.
+The first Yes shares compact accessible control text for the run. Every mouse or
+keyboard action still requires its own Yes/No. Screenshots are optional: the
+model can request one, or the engine asks when accessibility data is insufficient.
+Each screenshot needs separate approval. A text-only local model can operate
+accessible apps; image-dependent tasks require an image-capable selected model.
+No local-provider failure switches to cloud inference.
 
-Before the first capture, Bench asks permission to capture the app's visible screen region and send it to the displayed model endpoint. Each subsequent move, left click, Unicode typing action, supported keystroke, or scroll also requires Yes/No. Its resulting screenshot is included in that approval. The dialog shows the previous screenshot, exact action, and destination. All inputs are treated as potentially consequential; model risk claims cannot bypass approval. **No** stops and archives the chat and clears the queue. Prior effects remain.
+C owns all observation, validation, approval waits and execution. Small ordered
+move/click/type batches reduce model calls without combining approvals. Changes
+in app state discard the remaining batch. No closes the chat and clears its queue;
+prior effects remain. Ctrl+Alt+Shift+F10 remains emergency stop. Windows must
+foreground the selected app; if automatic focus fails, focus it within five seconds.
+Mouse movement takes about one second; typing stays paced. Pause holds the next
+input, while an already active action/request may finish. Preview speed affects
+file animations. Secure/elevated apps and cross-window popups remain unsupported.
 
-The C engine uses Windows GDI capture and real cursor/SendInput operations. It observes again after each approved action, then requests one next action. Screenshots are resized to at most 1600 pixels on the longest edge, with coordinates mapped back to physical window pixels. Motion takes about one second and typing is paced. PNGs remain in session memory/UI; Bench does not save them to chat history. Your model provider may process or retain submitted images according to its own settings. A local vision model can keep inference on the PC.
+Project mode sends its initial source snapshot once, then bounded inventory/deltas
+and touched/requested files. Existing file protections, real builds/tests, chat
+imports and workspace events remain. State is memory-only in the C engine and
+thin host and is lost on host restart. Screenshots are not saved to chat history.
+OpenAI Responses retains opaque prior tool/reasoning history; local requests keep
+only a bounded current working state. New observations default to text.
 
-**Ctrl+Alt+Shift+F10** is global emergency stop, including during model calls and pending approval. Desktop control refuses to start if that shortcut cannot be registered. The ordinary Stop button remains available. After Yes, Windows attempts to foreground the chosen app; if blocked, focus that app within five seconds. Do not type or move windows while an action runs. Unexpected focus, process identity, or window-geometry changes stop input. Secure/UAC screens, elevated apps, cross-window popups and protected video surfaces are unsupported. No elevation or focus-lock bypass is attempted. Select another app explicitly for a new target.
-
-Capture reads the selected window's visible screen rectangle, including any overlays covering it. Close sensitive content first. A screenshot cannot reliably identify every dangerous button or prove an outcome. Every input requires approval, and the final report is the model's assessment of the latest screenshot. Sessions stop at 24 actions or the host's 30-minute timeout. A model without image support fails through the normal API error report.
-
-Validation commands: `make all check` (16 core checks, 3 desktop checks, 8 desktop-agent protocol checks), then `cd workspace-ui` and `node --test tests/*.test.mjs` (43 tests). Explicit interactive checks, with runtime DLLs on PATH: `./test-pc.exe --interactive` from the source root, and `node tests/desktop-smoke.mjs` from workspace-ui. These operate only a disposable native test window. The first checks real mouse input, Unicode text, navigation keys, PNG capture, stale/expired/moved-window refusal, and the global emergency stop. The second checks clarification, real screenshots through C/libcurl, both local Chat Completions and Responses tool loops, preserved reasoning/tool history, per-action approvals and real click/type execution with deterministic model replies. Actual LLM vision accuracy and arbitrary third-party apps are not established by these fixtures.
-
-## Observe, act, verify
-
-OpenAI desktop sessions now use the Responses API and a strict `desktop_action` function backed by the native C driver. Choose **Models → OpenAI**, enter an available image-and-tool-capable model ID (for example `gpt-6-astra` if your API project has access), then select **Control an app**. Model access is determined by your API project; a ChatGPT subscription alone is not an API credential. Project coding and clarification retain the existing Chat Completions path. Local providers retain their compatible Chat Completions interface and must accept images and follow the documented JSON schema.
-
-Each model response identifies the current screenshot, describes the relevant visible controls, proposes one action with an expected result, and assesses the preceding action using the new screenshot. The workspace and permission dialog show these short observations and evidence. They are model assessments, not a guarantee of correctness. Final reports explicitly distinguish completed from blocked work. Windows accepting an input is reported as delivery, never proof that the application did what was requested.
-
-OpenAI request history retains all output items, opaque encrypted reasoning, tool call IDs, commentary phases, and screenshot results in their original order. Requests use `store:false`; the history exists in process memory and is discarded when the engine exits. Provider retention policies still apply. History is bounded at 32 MiB and the loop at 24 turns; reaching a limit stops with an error instead of silently losing state. Local requests likewise retain their assistant messages and observations. Large image histories increase inference cost and context use.
-
-After approval, the native driver takes another local screen capture before input. Changed window geometry, old observations, or significant visible content changes discard the proposed input; the new image goes back to the model and a replacement action requires fresh permission. This comparison tolerates some focus/caret changes and is heuristic: small semantic changes can escape it, animation can trigger it, and a screen can change after the check. Per-action approval, window/process checks, and emergency stop remain in force. Repeated equivalent actions and repeated uncertain results stop the loop. **Pause** now holds the next desktop input even after Yes; active input or a model request may finish. **Preview speed** applies to file animations only.
-
-This adopts the publicly documented tool/observation loop, not Astra's private training or model weights. OpenAI recommends code execution for Astra and also documents custom UI tools. Bench uses guarded native actions to retain individual permissions. References: [computer use](https://developers.openai.com/api/docs/guides/tools-computer-use), [custom UI tools](https://developers.openai.com/api/docs/guides/tools-computer-use-integration#use-your-own-ui-tools), [preserved reasoning](https://developers.openai.com/api/docs/guides/preserved-reasoning).
+See [HYBRID-OBSERVATION.md](HYBRID-OBSERVATION.md) for exact observation/action JSON,
+source entry points, message packaging, bounds and remaining limitations.
+See [VALIDATION.md](VALIDATION.md) for executed checks. Sessions stop after 24 model
+turns or 30 minutes. Input delivery is distinct from model-assessed completion.

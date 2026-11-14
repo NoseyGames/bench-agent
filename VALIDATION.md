@@ -190,3 +190,55 @@ Ran `node --test tests/*.test.mjs`: 38 tests passed, including new Codex/Claude 
 
 Not run: live OpenAI/Astra inference, live local-model inference, broad third-party app tasks, macOS/Linux desktop input. Model evidence and completed/blocked reports remain model assessments. Windows is the only native-input platform. The supplied local compatible model must support image input and the action schema. The new eight protocol tests run in GitHub's existing `make check` step; CI results must be checked on the uploaded commit separately.
 
+
+
+## Hybrid structured observation update - 2026-11-13
+
+Implemented and built the UI Automation helper, structured default observation,
+optional image gates, strict small action batches, persistent project deltas and
+host cache. Exact fields and message formats: HYBRID-OBSERVATION.md.
+
+Executed on this Windows workstation using the existing MSYS2 UCRT64 toolchain:
+
+```sh
+make all check
+make smoke-repair
+make bench-engine.exe
+./test-pc.exe --structured
+./test-pc.exe --interactive
+cd workspace-ui
+node --test tests/*.test.mjs
+node tests/desktop-smoke.mjs
+```
+
+- C checks: **41 passed** (16 core, 6 native desktop, 13 desktop protocol,
+  6 project-state). Final builds emitted no compiler warnings under the existing
+  C11/-Wall/-Wextra/-Wpedantic flags.
+- Workspace/host: **45 passed**, including per-action ACK rejection before Yes,
+  fresh tokens, denial stopping a batch/closing the chat, read-only/cancellation,
+  C-only cache isolation, unchanged imports, and real project edit/build/test.
+  The local-provider fixture confirms unrelated initial file contents are absent
+  after clarification, explicitly requested source is present before editing,
+  and cloud credentials never reach the local server.
+- Native structured fixture: actual Windows UIA window/process/control fields,
+  focused text, nearby controls, password redaction, no default PNG, stale control
+  rejection, screenshot invalidation and forced three-second hung-helper fallback.
+- Native input fixture: real cursor/click/Unicode/key operations in its disposable
+  window, capture/expiry/movement/emergency-stop regression, and a target changing
+  during cursor travel. The changed target produced WOULD_BLOCK without a click.
+- Hybrid C/libcurl integration: local Chat and Responses both performed an actual
+  click/type batch with separate host decisions. The next UIA result contained
+  the typed text. First two model requests had no PNG; an explicit screenshot
+  request produced exactly one PNG. Local history stayed bounded; Responses
+  preserved opaque reasoning/tool output and supplied structured deltas.
+- Thin-window integration: the engine requested separate observe and screenshot
+  approvals before its first model request; exactly one fallback PNG, no input.
+- Existing GTK project repair smoke passed real failing-test/edit/rebuild/retest.
+
+These tests use deterministic local HTTP replies, not live language models. No
+paid OpenAI calls, actual 7B-32B model quality measurements, arbitrary app-provider
+coverage, manual browser UI regression, or macOS/Linux runtime test was performed
+for this update. No exact inference token/cost reduction is claimed. Responses
+still replays its existing opaque history, including any previously approved
+images; local mode discards older images/history. The UIA path reduces new image
+observations, and project deltas avoid resending unrelated file contents.
