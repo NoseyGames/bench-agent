@@ -28,3 +28,49 @@
 #effort-label{display:none}#review{position:absolute;right:0;top:40px;bottom:0;width:min(650px,80vw);z-index:10;box-shadow:-20px 0 50px #0005}
 @media(max-width:1050px){#bench-work{width:44%;min-width:280px}#sidebar{width:200px;flex-basis:200px}#messages,.composer-wrap{padding-left:20px;padding-right:20px}}
 @media(max-width:760px){#bench-work{position:absolute;right:0;top:40px;bottom:0;width:90%;z-index:8;box-shadow:-20px 0 50px #0005}#bench-toolbar{padding:7px}#bench-toolbar .root-label{width:100%}}
+
+/* Decision surfaces keep risk, scope and exact input visible together. */
+.bench-approval{width:min(680px,calc(100vw - 40px));max-height:calc(100vh - 48px);overflow:auto;background:var(--surface);color:var(--text);padding:28px;border:1px solid var(--border);border-radius:14px}
+.bench-approval::backdrop{background:#0009;backdrop-filter:blur(3px)}
+.bench-approval>p{font-size:14px;line-height:1.65}.bench-approval>button{margin:14px 8px 0 0;padding:10px 14px;border:1px solid var(--border)}
+.bench-approval>select{display:block;width:100%;padding:12px;background:var(--raised);color:var(--text);border:1px solid var(--border);border-radius:7px}
+.bench-approval[data-kind]{--risk:#d7ae71;width:min(680px,calc(100vw - 40px));max-height:calc(100vh - 48px);padding:28px;border-top:3px solid var(--risk);box-shadow:0 24px 90px #0005}
+.bench-approval[data-severity=critical]{--risk:#e39c90}
+html[data-theme=light] .bench-approval[data-kind]{--risk:#855214}
+html[data-theme=light] .bench-approval[data-severity=critical]{--risk:#a43227}
+.approval-kicker{display:flex;align-items:center;justify-content:space-between;gap:16px;color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.approval-severity{color:var(--risk);font-weight:650;border:1px solid color-mix(in srgb,var(--risk) 45%,transparent);border-radius:5px;padding:4px 7px;white-space:nowrap}
+.bench-approval #bench-approval-title{margin:18px 0 10px;font-size:23px;line-height:1.25;letter-spacing:-.5px;font-weight:600;overflow-wrap:anywhere}
+.bench-approval .approval-risk{font-size:14px;line-height:1.6;color:var(--text);margin:0 0 18px}
+.approval-context{display:grid;grid-template-columns:115px minmax(0,1fr);gap:7px 14px;padding:14px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:12px;line-height:1.5;margin:0 0 20px}
+.approval-context dt{color:var(--muted)}.approval-context dd{margin:0;overflow-wrap:anywhere}
+.bench-approval .bench-action-summary{grid-template-columns:115px minmax(0,1fr);gap:8px 14px;margin:14px 0}
+.bench-approval[data-kind] pre{background:var(--sidebar);border:1px solid var(--border);border-radius:8px;font:12px/1.65 var(--code-font,Consolas,monospace);padding:14px;max-height:25vh}
+.bench-approval .approval-note{font-size:13px;line-height:1.65;margin:20px 0 0;border-top:1px solid var(--border);padding-top:16px;color:var(--text)}
+.bench-approval .approval-buttons{display:flex;justify-content:space-between;gap:12px;padding-top:20px;position:sticky;bottom:-28px;background:var(--surface);padding-bottom:2px}
+.bench-approval .approval-buttons button{margin:0;padding:11px 16px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:550;color:var(--text)}
+.bench-approval .approval-buttons .approval-allow{border-color:var(--risk);background:color-mix(in srgb,var(--risk) 12%,var(--surface))}
+.bench-approval details summary{color:var(--muted);padding:4px 0}.bench-approval details p{font-size:12px;color:var(--muted)}
+.bench-approval button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+/* Native accessibility data is the primary desktop preview. Raw JSON is optional. */
+#bench-work[data-mode=desktop] #bench-desktop-progress{flex:1;min-height:120px;max-height:none;padding:18px 20px;overflow:auto}
+#bench-desktop-progress>strong{font-size:12px;font-weight:500;color:var(--muted)}
+.desktop-observation-summary h3{margin:12px 0 4px;font-size:16px;line-height:1.4;font-weight:600;color:var(--text)}
+#bench-desktop-progress .desktop-observation-meta{font-size:11px;color:var(--muted);margin:0 0 18px}
+#bench-desktop-progress .desktop-observation-limit{padding:10px 12px;border-left:2px solid var(--accent);background:var(--card);font-size:12px;margin-bottom:16px}
+.desktop-section-label{display:block;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:9px}
+.desktop-focus{border:1px solid var(--border);border-radius:8px;padding:13px 14px;background:var(--card);margin:16px 0 22px}
+.desktop-focus>strong{display:block;font-weight:550;font-size:13px}.desktop-focus>small{display:block;margin-top:8px}
+.desktop-controls{margin-bottom:16px}.desktop-control{display:grid;grid-template-columns:65px minmax(0,1fr) auto;gap:10px;padding:11px 0;border-top:1px solid var(--border)}
+.desktop-control-role{color:var(--muted);font-size:11px}.desktop-control-name strong{display:block;font-size:12px;font-weight:500}
+.desktop-control-name small{display:block;margin-top:4px}.desktop-control-bounds{font:10px/1.6 var(--code-font,Consolas,monospace);color:var(--muted);white-space:nowrap}
+.desktop-control-value{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+.desktop-raw{margin-top:16px}.desktop-raw summary{font-size:11px;color:var(--muted);cursor:pointer}.desktop-raw pre{font:11px/1.5 var(--code-font,Consolas,monospace);white-space:pre-wrap;overflow-wrap:anywhere;max-height:200px;overflow:auto;background:var(--card);padding:12px;border-radius:7px}
+#bench-desktop-progress .desktop-next-action{border-top:1px solid var(--border);margin-top:16px;padding-top:12px;font-size:12px;color:var(--muted)}
+#bench-desktop-capture{flex-shrink:0;border-top:1px solid var(--border);max-height:35vh;overflow:auto;background:var(--surface)}
+#bench-desktop-capture[hidden]{display:none}#bench-desktop-capture>summary{padding:12px 20px;font-size:12px;color:var(--muted);cursor:pointer}
+#bench-desktop-capture #bench-desktop-image{max-height:29vh;flex:none;min-height:0}
+#bench-work[data-mode=desktop] .bench-controls>label[title],#bench-work[data-mode=desktop] #bench-skip{display:none}
+@media(max-width:1200px){.desktop-control{grid-template-columns:65px minmax(0,1fr)}.desktop-control>.desktop-control-bounds{grid-column:2}.bench-approval .approval-context{grid-template-columns:100px minmax(0,1fr)}}
+@media(max-width:600px){.bench-approval[data-kind]{padding:20px}.bench-approval .approval-buttons{bottom:-20px;flex-wrap:wrap}.bench-approval .approval-buttons button{flex:1}.bench-approval .approval-context,.bench-approval .bench-action-summary{grid-template-columns:1fr;gap:4px}.approval-context dd,.bench-action-summary dd{margin-bottom:6px}}

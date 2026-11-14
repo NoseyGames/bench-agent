@@ -112,16 +112,19 @@ export function createHost({engine=path.join(here,'..',process.platform==='win32
       runs.set(data.id,reservation);
       res.on('close',()=>{if(runs.get(data.id)===reservation)cancel(data.id);});
       const computerMode=!!desktopWindow||!data.root.trim();
+      // This is session configuration, never taken from a model plan. Preserve
+      // the explicit no-project command workflow as its own coding-shaped mode.
+      const sessionMode=desktopWindow?'desktop':computerMode?'commands':'project';
       if(computerMode)await fs.mkdir(computerRoot,{recursive:true});
       const root=await fs.realpath(computerMode?computerRoot:data.root);if(!(await fs.stat(root)).isDirectory())throw Error('Project must be a directory');
       if(reservation.cancelled||res.destroyed){cancel(data.id);return;}
       const last=data.messages.filter(m=>m.role==='user').at(-1);if(!last||typeof last.text!=='string')throw Error('A task is required');
-      const stateKey=JSON.stringify([root,desktopWindow,config.provider,config.baseUrl,data.model.trim()]);
+      const stateKey=JSON.stringify([root,desktopWindow,sessionMode,config.provider,config.baseUrl,data.model.trim()]);
       const pending=questions.get(data.chatId),answer=pending?.stateKey===stateKey;
       const attachmentText=(last.files||[]).map(f=>`\nAttached reference ${f.name}:\n${f.content}`).join('');
       const task=answer?pending.task:last.text+attachmentText;
       if(data.instructions!==undefined&&(typeof data.instructions!=='string'||data.instructions.length>128000))throw Error('Invalid instructions');
-      const request={key:keyFor(config),endpoint:config.baseUrl+'/chat/completions',jsonMode:config.jsonMode,desktopProtocol:config.provider==='openai'?'responses':'chat',root,computerMode,desktopWindow,model:data.model.trim(),task:task+(data.instructions?`\nUser preferences and instructions:\n${data.instructions}`:''),phase:answer?'execute':'questions',answers:answer?last.text+attachmentText:'',questions:answer?pending.text:''};
+      const request={key:keyFor(config),endpoint:config.baseUrl+'/chat/completions',jsonMode:config.jsonMode,desktopProtocol:config.provider==='openai'?'responses':'chat',root,computerMode,sessionMode,desktopWindow,model:data.model.trim(),task:task+(data.instructions?`\nUser preferences and instructions:\n${data.instructions}`:''),phase:answer?'execute':'questions',answers:answer?last.text+attachmentText:'',questions:answer?pending.text:''};
       // Only C-produced state is retained. Browser requests cannot seed it.
       // Bound to chat/root/window/provider/model; no credentials or images.
       const prior=states.get(data.chatId);
