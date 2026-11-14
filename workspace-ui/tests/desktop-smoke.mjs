@@ -15,21 +15,25 @@ const sentinel='UNRELATED_PROJECT_SENTINEL';
 const counts={local:0,responses:0};
 const serverErrors=[];
 let fixture,fixtureLines,host,engine,engineLines,model;
+let thinMode=false,thinCalls=0;
 let priorResponsesPrefix=null,priorCallId=null,priorLocalMessages=null;
 
 function action(frame,mode){
   assert.ok(frame>=1&&frame<=3,'Unexpected additional model turn');
-  const common={reason:'Exercise only the disposable fixture',text:'',x:0,y:0,delta:0,frame,
-    observation:'The disposable fixture is the selected app.',expected:'The edit field receives focus.',
-    verification:frame===1?'first':'verified',evidence:'Deterministic fixture reply; this is not a model vision assessment.',outcome:'ongoing'};
-  if(frame===1)return {...common,action:'click',x:80,y:100};
-  if(frame===2)return {...common,action:'type',text:mode==='local'?'Local loop verified':' Responses loop verified',expected:'The fixture edit field displays the test message.'};
-  return {...common,action:'done',expected:'',outcome:'completed',reason:'Fixture sequence complete; deterministic replies do not establish model vision accuracy.'};
+  const common={frame,verification:frame===1?'first':'verified',evidence:'Deterministic fixture reply; this is not a model accuracy assessment.',outcome:'ongoing'};
+  const input={reason:'Exercise only the disposable fixture',text:'',x:0,y:0,delta:0,expected:'The edit field receives focus.'};
+  if(frame===1)return {...common,actions:[{...input,action:'click',x:80,y:100},{...input,action:'type',text:mode==='local'?'Local loop verified':' Responses loop verified',expected:'The fixture edit field displays the test message.'}]};
+  if(frame===2)return {...common,actions:[{...input,action:'screenshot',expected:'Verify the visible text using a screenshot.'}]};
+  return {...common,outcome:'completed',actions:[]};
 }
 
-function assertImage(content,type){
-  const image=content.find(part=>part.type===type);assert.ok(image,'Missing screenshot');
-  assert.match(type==='image_url'?image.image_url.url:image.image_url,png);
+function assertObservation(content,type,frame){
+  const image=content.find(part=>part.type===type);
+  assert.equal(!!image,frame===3,'PNG must occur only after the explicit screenshot request');
+  if(image)assert.match(type==='image_url'?image.image_url.url:image.image_url,png);
+  const text=content.find(part=>part.type===(type==='image_url'?'text':'input_text')).text;
+  const observation=JSON.parse(text);assert.equal(observation.frame,frame);assert.equal(typeof observation.driver_result,'string');
+  assert.ok(observation.desktop||observation.desktop_delta,'Structured desktop state or delta required');
 }
 
 function responsesReply(body){
@@ -40,7 +44,7 @@ function responsesReply(body){
   assert.equal(body.tools.length,1);const tool=body.tools[0];
   assert.equal(tool.name,'desktop_action');assert.equal(tool.type,'function');assert.equal(tool.strict,true);
   assert.equal(tool.parameters.additionalProperties,false);
-  assert.deepEqual([...tool.parameters.required].sort(),['action','reason','text','x','y','delta','frame','observation','expected','verification','evidence','outcome'].sort());
+  assert.deepEqual([...tool.parameters.required].sort(),['frame','verification','evidence','outcome','actions'].sort());
   const latest=body.input.at(-1);
   if(priorResponsesPrefix){
     // Opaque reasoning, assistant phase and arguments must survive unchanged as
@@ -48,13 +52,13 @@ function responsesReply(body){
     assert.equal(body.input.length,priorResponsesPrefix.length+1);
     assert.deepEqual(body.input.slice(0,-1),priorResponsesPrefix);
     assert.equal(latest.type,'function_call_output');assert.equal(latest.call_id,priorCallId);
-    assertImage(latest.output,'input_image');
-    assert.equal(latest.output.find(p=>p.type==='input_image').detail,'original');
-    assert.match(latest.output.find(p=>p.type==='input_text').text,/Driver result:/);
+    assertObservation(latest.output,'input_image',counts.responses+1);
+    if(counts.responses===2)assert.equal(latest.output.find(p=>p.type==='input_image').detail,'original');
+    assert.equal(typeof JSON.parse(latest.output.find(p=>p.type==='input_text').text).driver_result,'string');
   }else{
-    assert.equal(body.input.length,1);assert.equal(latest.role,'user');assertImage(latest.content,'input_image');
-    assert.equal(latest.content.find(p=>p.type==='input_image').detail,'original');
+    assert.equal(body.input.length,1);assert.equal(latest.role,'user');assertObservation(latest.content,'input_image',1);
   }
+  if(counts.responses===1)assert.match(latest.output.find(p=>p.type==='input_text').text,/Responses loop verified/,'Post-batch UIA must show text actually typed');
   const frame=++counts.responses;
   const output=[
     {type:'reasoning',id:'rs_fixture_'+frame,summary:[],encrypted_content:'opaque_reasoning_fixture_'+frame},
@@ -68,8 +72,10 @@ function responsesReply(body){
 function localReply(body){
   const latest=body.messages.at(-1);let reply;
   if(Array.isArray(latest.content)){
-    assertImage(latest.content,'image_url');
-    if(priorLocalMessages){assert.equal(body.messages.length,priorLocalMessages.length+2);assert.deepEqual(body.messages.slice(0,-2),priorLocalMessages);assert.equal(body.messages.at(-2).role,'assistant');}
+    assertObservation(latest.content,'image_url',counts.local+1);
+    if(counts.local===1)assert.match(latest.content.find(p=>p.type==='text').text,/Local loop verified/,'Post-batch UIA must show text actually typed');
+    assert.ok(body.messages.length<=4,'Local history must remain bounded');
+    if(priorLocalMessages)assert.equal(body.messages.at(-2).role,'assistant');
     priorLocalMessages=structuredClone(body.messages);
     reply=action(++counts.local,'local');
   }else reply={questions:['Use the disposable fixture?','Type the test message?']};
@@ -101,9 +107,9 @@ async function runLocal(window,root,baseUrl){
       if(event.type==='review'){assert.equal(event.name,'desktop-completed');done=true;}
     }
   }
-  assert.equal(approvals,3);assert.equal(screenshots,3);assert.equal(counts.local,3);assert.ok(verified>=2);assert.ok(done);
+  assert.equal(approvals,4);assert.equal(screenshots,1);assert.equal(counts.local,3);assert.ok(verified>=2);assert.ok(done);
   await post('cancel',{id:'execute'});host.close();host=null;
-  console.log('Local desktop integration PASS: approval-before-ACK, retained history, 3 screenshots, real fixture click/type.');
+  console.log('Local desktop integration PASS: approval-before-ACK, bounded structured history, 1 requested screenshot, per-action batch gates, real fixture click/type.');
 }
 
 async function runResponses(window,root,baseUrl){
@@ -123,9 +129,26 @@ async function runResponses(window,root,baseUrl){
       if(event.type==='verification')verified++;
       if(event.type==='review'){assert.equal(event.name,'desktop-completed');done=true;}
     }
-    const [code]=await closed;assert.equal(code,0,stderr);assert.equal(approvals,3);assert.equal(screenshots,3);assert.equal(counts.responses,3);assert.ok(verified>=2);assert.ok(done);
-    console.log('Responses desktop integration PASS: native tool calls, preserved encrypted reasoning/phase/history, matched image tool results, real fixture click/type.');
+    const [code]=await closed;assert.equal(code,0,stderr);assert.equal(approvals,4);assert.equal(screenshots,1);assert.equal(counts.responses,3);assert.ok(verified>=2);assert.ok(done);
+    console.log('Responses desktop integration PASS: native tool calls, preserved encrypted reasoning/phase/history, structured deltas and one requested image tool result, real fixture click/type.');
   }finally{clearTimeout(deadline);engineLines.close();engineLines=null;engine.kill();engine=null;}
+}
+
+async function runThin(root,baseUrl){
+  fixture.kill();fixtureLines.close();
+  fixture=spawn(path.resolve('../test-pc.exe'),['--thin-fixture'],{windowsHide:true,stdio:['ignore','pipe','inherit']});
+  fixtureLines=createInterface({input:fixture.stdout});
+  const [window]=await once(fixtureLines,'line');thinMode=true;
+  engine=spawn(path.resolve('../bench-engine.exe'),[],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+  const closed=once(engine,'close');const timer=setTimeout(()=>engine?.kill(),60000);engine.stdin.on('error',()=>{});
+  let stderr='';engine.stderr.on('data',chunk=>stderr+=chunk);engineLines=createInterface({input:engine.stdout});
+  engine.stdin.write(JSON.stringify({endpoint:baseUrl+'/chat/completions',root,desktopWindow:window,desktopProtocol:'chat',model:'thin-fixture',task:'Inspect the empty test app',answers:'Only inspect',phase:'execute'})+'\n');
+  const gates=[];let screenshots=0,done=false;
+  try{
+    for await(const line of engineLines){const e=JSON.parse(line);if(e.type==='error')throw Error(e.text);if(e.type==='desktop'){gates.push(e.name);assert.equal(thinCalls,0,'No model call before screenshot sharing approval');engine.stdin.write('ack\n');}if(e.type==='screenshot')screenshots++;if(e.type==='review'){assert.equal(e.name,'desktop-blocked');done=true;}}
+    const [code]=await closed;assert.equal(code,1,stderr);assert.deepEqual(gates,['observe','screenshot']);assert.equal(screenshots,1);assert.equal(thinCalls,1);assert.ok(done);
+    console.log('Thin accessibility integration PASS: separate observation/screenshot approvals, one fallback PNG, no input.');
+  }finally{clearTimeout(timer);engineLines.close();engineLines=null;engine.kill();engine=null;}
 }
 
 try{
@@ -138,7 +161,9 @@ try{
       let raw='';for await(const chunk of req)raw+=chunk;
       assert.ok(!raw.includes(sentinel),'Desktop request leaked project files');
       const body=JSON.parse(raw);assert.ok(req.url==='/v1/chat/completions'||req.url==='/v1/responses');
-      const reply=req.url==='/v1/responses'?responsesReply(body):localReply(body);
+      let reply;
+      if(thinMode){const content=body.messages.at(-1).content;assert.ok(content.some(p=>p.type==='image_url'),'Thin state requires approved screenshot');assert.match(content.find(p=>p.type==='text').text,/\"thin\":true/);thinCalls++;reply={choices:[{finish_reason:'stop',message:{content:JSON.stringify({frame:1,verification:'first',evidence:'Empty fixture exposes no client controls.',outcome:'blocked',actions:[]})}}]};}
+      else reply=req.url==='/v1/responses'?responsesReply(body):localReply(body);
       res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(reply));
     }catch(error){serverErrors.push(error);res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:error.message}));}
   });
@@ -146,7 +171,7 @@ try{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'bench-vision-smoke-'));
   await fs.writeFile(path.join(root,'private.c'),sentinel);
   const baseUrl=`http://127.0.0.1:${model.address().port}/v1`;
-  await runLocal(window,root,baseUrl);await runResponses(window,root,baseUrl);
+  await runLocal(window,root,baseUrl);await runResponses(window,root,baseUrl);await runThin(root,baseUrl);
   assert.deepEqual(serverErrors,[]);
 }finally{
   host?.close();engine?.kill();engineLines?.close();model?.closeAllConnections();model?.close();fixture?.kill();fixtureLines?.close();

@@ -90,3 +90,17 @@ test('current preferences reach the engine in both clarification and execution p
   request.messages.push({role:'user',text:'Answers'});request.instructions='Updated preferences';
   const result=await(await post('run',request)).text();assert.match(result,/success/);assert.match(result,/Original task/);assert.match(result,/Updated preferences/);assert.doesNotMatch(result,/First preferences/);
 });
+
+
+test('host carries only C-produced compact state across turns and isolates models/chats',async t=>{
+  const script=`require('node:readline').createInterface({input:process.stdin}).once('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify({type:'status',text:JSON.stringify({project:r.projectState||'',desktop:r.desktopState||'',phase:r.phase})}));console.log(JSON.stringify({type:'state',name:'project',text:JSON.stringify({version:1,root:r.root,initialized:true,tracked:[],inventory:[],inventory_truncated:false})}));console.log(JSON.stringify({type:'state',name:'desktop',text:JSON.stringify({window:r.desktopWindow||'',evidence:'prior C observation'})}));console.log(JSON.stringify({type:r.phase==='questions'?'questions':'success',text:'C fixture result'}));process.exit(0);});`;
+  const host=createHost({engine:process.execPath,engineArgs:['-e',script]});host.server.listen(0,'127.0.0.1');await once(host.server,'listening');t.after(()=>host.close());
+  const post=(route,data)=>fetch(`http://127.0.0.1:${host.server.address().port}/api/${route}`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+host.token},body:JSON.stringify(data)});
+  await post('config',{provider:'local',baseUrl:'http://127.0.0.1:19191/v1'});
+  const request={id:'state',chatId:'state-chat',root:process.cwd(),model:'first',messages:[{role:'user',text:'Task'}],projectState:'browser-forged',desktopState:'browser-forged'};
+  async function run(overrides={}){const response=await post('run',{...request,...overrides});assert.equal(response.status,200);const events=(await response.text()).trim().split('\n').map(JSON.parse);assert.ok(!events.some(e=>e.type==='state'),'Internal state must not change the UI protocol');return JSON.parse(events.find(e=>e.type==='status').text);}
+  const first=await run();assert.equal(first.project,'');assert.equal(first.desktop,'');
+  const second=await run();assert.equal(second.phase,'execute');assert.equal(JSON.parse(second.project).initialized,true);assert.equal(JSON.parse(second.desktop).evidence,'prior C observation');
+  assert.equal((await run({model:'second'})).project,'');
+  assert.equal((await run({chatId:'new-chat'})).desktop,'');
+});

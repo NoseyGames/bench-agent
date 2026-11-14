@@ -18,14 +18,16 @@ test('provider profiles restrict destinations and do not require a local key',()
 test('local HTTP models + real C clarification, planning, save, build and test without cloud credentials',async t=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'bench-local-'));
   await fs.writeFile(path.join(root,'main.c'),'int main(void) { return 1; }\n');
+  await fs.writeFile(path.join(root,'unrelated.txt'),'UNTOUCHED_SNAPSHOT_MARKER');
   const requests=[];
   const model=http.createServer(async(req,res)=>{
     let raw='';for await(const c of req)raw+=c;
     requests.push({url:req.url,authorization:req.headers.authorization,body:raw?JSON.parse(raw):null});
     res.setHeader('Content-Type','application/json');
     if(req.url==='/v1/models'){res.end(JSON.stringify({data:[{id:'local-test-model'}]}));return;}
-    const question=requests.filter(r=>r.url==='/v1/chat/completions').length===1;
-    const value=question?{questions:['Should the exit code be zero?','Use GCC to compile and test?']}:{summary:'Fix the test',steps:['Save','Build','Test'],files:[{name:'main.c',content:'int main(void) { return 0; }\n'}],read_files:[],commands:[{kind:'build',command:'gcc main.c -o check.exe',timeout_seconds:30},{kind:'test',command:process.platform==='win32'?'check.exe':'./check.exe',timeout_seconds:30}]};
+    const round=requests.filter(r=>r.url==='/v1/chat/completions').length;
+    const question=round===1;
+    const value=question?{questions:['Should the exit code be zero?','Use GCC to compile and test?']}:round===2?{summary:'Read omitted source',steps:['Read main.c'],files:[],commands:[],read_files:['main.c']}:{summary:'Fix the test',steps:['Save','Build','Test'],files:[{name:'main.c',content:'int main(void) { return 0; }\n'}],read_files:[],commands:[{kind:'build',command:'gcc main.c -o check.exe',timeout_seconds:30},{kind:'test',command:process.platform==='win32'?'check.exe':'./check.exe',timeout_seconds:30}]};
     res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'```json\n'+JSON.stringify(value)+'\n```'}}]}));
   });
   model.listen(0,'127.0.0.1');await once(model,'listening');t.after(()=>model.close());
@@ -42,6 +44,10 @@ test('local HTTP models + real C clarification, planning, save, build and test w
   };
   assert.ok((await run('questions','Fix the program')).some(e=>e.type==='questions'));
   const execution=await run('execute','Yes, use GCC and return zero.');assert.ok(execution.some(e=>e.type==='success'),JSON.stringify(execution));
+  const calls=requests.filter(r=>r.body);assert.equal(calls.length,3);
+  assert.match(JSON.stringify(calls[0].body),/UNTOUCHED_SNAPSHOT_MARKER/);
+  for(const call of calls.slice(1))assert.ok(!JSON.stringify(call.body).includes('UNTOUCHED_SNAPSHOT_MARKER'),'Unchanged unrelated file contents must not be resent');
+  assert.ok(JSON.stringify(calls[2].body).includes('int main(void) { return 1; }'),'Requested file must be sent before the edit');
   assert.equal(await fs.readFile(path.join(root,'main.c'),'utf8'),'int main(void) { return 0; }\n');
   for(const r of requests){assert.equal(r.authorization,undefined);if(r.body){assert.equal(r.body.model,'local-test-model');assert.equal(r.body.response_format,undefined);}}
 });

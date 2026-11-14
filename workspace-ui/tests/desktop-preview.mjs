@@ -1,5 +1,5 @@
 // Explicit manual UI harness, never started by the normal app or test suite.
-// No remote model or account. Approve the first capture, inspect the next click
+// No remote model or account. Approve the first structured observation, inspect the next click
 // permission, then choose No. This process never acknowledges actions itself.
 import http from 'node:http';
 import {spawn} from 'node:child_process';
@@ -40,16 +40,11 @@ try{
       const body=JSON.parse(raw),content=body.messages?.at(-1)?.content;let reply;
       if(Array.isArray(content)){
         const observation=content.find(part=>part.type==='text')?.text||'';
-        const frame=Number(observation.match(/Observation frame: (\d+)/)?.[1]);
+        const frame=JSON.parse(observation).frame;
         if(!Number.isInteger(frame)||frame<1)throw Error('Observation frame missing.');
-        if(!content.some(part=>part.type==='image_url'&&part.image_url?.url?.startsWith('data:image/png;base64,')))throw Error('Screenshot missing.');
-        // Only one click is ever proposed. If it is approved, stop with an
-        // explicit blocked result; the harness cannot assess model accuracy.
-        reply={action:frame===1?'click':'done',reason:frame===1?'Focus the empty edit field in the disposable fixture. Choose No to verify that denial closes this chat.':'Manual preview stopped after its single fixture action.',
-          text:'',x:frame===1?80:0,y:frame===1?100:0,delta:0,frame,
-          observation:'A disposable test app with an edit field and Verify click button is selected.',
-          expected:frame===1?'The edit field receives focus.':'',verification:frame===1?'first':'uncertain',
-          evidence:'This is a deterministic UI preview, not a real model assessment.',outcome:frame===1?'ongoing':'blocked'};
+        if(content.some(part=>part.type==='image_url'))throw Error('Unexpected default screenshot.');
+        reply={frame,verification:frame===1?'first':'uncertain',evidence:'This is a deterministic UI preview, not a real model assessment.',outcome:frame===1?'ongoing':'blocked',
+          actions:frame===1?[{action:'click',reason:'Focus the empty edit field in the disposable fixture. Choose No to verify denial closes this chat.',text:'',x:80,y:100,delta:0,expected:'The edit field receives focus.'}]:[]};
       }else reply={questions:['Use the app named Bench desktop control test - disposable?','Inspect the click permission and choose No to close this chat?']};
       res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(reply)}}]}));
     }catch(error){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:error.message}));}
@@ -62,5 +57,5 @@ try{
   const configured=await fetch(origin+'/api/config',{method:'POST',headers:{Authorization:'Bearer '+host.token,'Content-Type':'application/json'},body:JSON.stringify({provider:'local',baseUrl:`http://127.0.0.1:${model.address().port}/v1`,model:'bench-ui-vision-fixture',jsonMode:true})});
   if(!configured.ok)throw Error('Could not configure the local fixture model.');
   console.log(JSON.stringify({url:origin+'/#'+host.token,fixtureTitle,windowId,
-    instructions:'Choose Control an app, select the disposable fixture, send a task and answer the questions. Approve the initial screenshot, inspect the click permission, then choose No. No action is auto-approved. Fixture expires after five minutes.'}));
+    instructions:'Choose Control an app, select the disposable fixture, send a task and answer the questions. Approve the initial structured observation, inspect the click permission, then choose No. No action is auto-approved. Fixture expires after five minutes.'}));
 }catch(error){stop();console.error(error.message);process.exitCode=1;}
